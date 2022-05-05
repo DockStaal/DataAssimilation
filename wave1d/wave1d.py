@@ -24,7 +24,7 @@ from scipy.sparse.linalg import spsolve
 import matplotlib.pyplot as plt
 from pathlib import Path
 import timeseries
-import dateutil 
+import dateutil.parser
 import datetime
 
 minutes_to_seconds=60.
@@ -65,7 +65,7 @@ def settings():
     #1) simple function
     #s['h_left'] = 2.5 * np.sin(2.0*np.pi/(12.*hours_to_seconds)*t)
     #2) read from file
-    (bound_times,bound_values)=timeseries.read_series('tide_cadzand.txt')
+    (bound_times,bound_values)=timeseries.read_series(path_to_data / 'tide_cadzand.txt')
     bound_t=np.zeros(len(bound_times))
     for i in np.arange(len(bound_times)):
         bound_t[i]=(bound_times[i]-reftime).total_seconds()
@@ -207,16 +207,16 @@ def simulate():
         series_data[:,i]=x[ilocs]
         
     #load observations
-    (obs_times,obs_values)=timeseries.read_series('tide_cadzand.txt')
+    (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_cadzand.txt')
     observed_data=np.zeros((len(ilocs),len(obs_times)))
     observed_data[0,:]=obs_values[:]
-    (obs_times,obs_values)=timeseries.read_series('tide_vlissingen.txt')
+    (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_vlissingen.txt')
     observed_data[1,:]=obs_values[:]
-    (obs_times,obs_values)=timeseries.read_series('tide_terneuzen.txt')
+    (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_terneuzen.txt')
     observed_data[2,:]=obs_values[:]
-    (obs_times,obs_values)=timeseries.read_series('tide_hansweert.txt')
+    (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_hansweert.txt')
     observed_data[3,:]=obs_values[:]
-    (obs_times,obs_values)=timeseries.read_series('tide_bath.txt')
+    (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_bath.txt')
     observed_data[4,:]=obs_values[:]
 
     plot_series(times,series_data,s,observed_data)

@@ -6,7 +6,10 @@ Created on Mon Mar  5 10:45:10 2018
 @author: verlaanm
 """
 
-import dateutil
+import dateutil.parser
+from pathlib import Path
+
+path_to_data = Path("../data")
 
 def read_series(filename):
     infile=open(filename,'r')
@@ -26,7 +29,7 @@ def read_series(filename):
 # Tests
 #
 if __name__ == "__main__":
-    (times,values)=read_series('tide_vlissingen.txt');
+    (times,values)=read_series(path_to_data / 'tide_vlissingen.txt');
     assert len(times)==len(values) #should be matching pairs
     assert len(times)==289
     assert abs(values[0]-0.07)<0.01
