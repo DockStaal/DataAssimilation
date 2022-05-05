@@ -22,6 +22,7 @@ import numpy as np
 from scipy.sparse import spdiags
 from scipy.sparse.linalg import spsolve
 import matplotlib.pyplot as plt
+from pathlib import Path
 import timeseries
 import dateutil 
 import datetime
@@ -29,6 +30,8 @@ import datetime
 minutes_to_seconds=60.
 hours_to_seconds=60.*60.
 days_to_seconds=24.*60.*60.
+path_to_figs = Path("../figures")
+path_to_data = Path("../data")
 
 def settings():
     s=dict() #hashmap to  use s['g'] as s.g in matlab
@@ -150,7 +153,8 @@ def plot_state(fig,x,i,s):
     ax2=fig.add_subplot(212)
     ax2.plot(xu,x[1::2])
     ax2.set_ylabel('u')
-    plt.savefig("fig_map_%3.3d.png"%i)
+    figname = "fig_map_%3.3d.png"%i
+    plt.savefig(path_to_figs / figname)
     plt.draw()
     plt.pause(0.2)
 
@@ -165,7 +169,8 @@ def plot_series(t,series_data,s,obs_data):
         ax.set_xlabel('time')
         ntimes=min(len(t),obs_data.shape[1])
         ax.plot(t[0:ntimes],obs_data[i,0:ntimes],'k-')
-        plt.savefig(("%s.png"%loc_names[i]).replace(' ','_'))
+        figname = ("%s.png"%loc_names[i]).replace(' ','_')
+        plt.savefig(path_to_figs / figname)
 
     
 def simulate():
