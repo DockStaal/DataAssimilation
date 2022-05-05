@@ -18,6 +18,11 @@
 #  h[n+1,m] + 0.5 D dt/dx ( u[n+1,m+1/2] - u[n+1,m-1/2])  
 #= h[n  ,m] - 0.5 D dt/dx ( u[n  ,m+1/2] - u[n  ,m-1/2])
 
+"""
+    I am pretty sure they are just plotting the whole estuary. That is 100.000 m.
+    In the end plots black is observed and blue is calculated.
+"""
+
 import numpy as np
 from scipy.sparse import spdiags
 from scipy.sparse.linalg import spsolve
@@ -156,7 +161,7 @@ def plot_state(fig,x,i,s):
     figname = "fig_map_%3.3d.png"%i
     plt.savefig(path_to_figs / figname)
     plt.draw()
-    plt.pause(0.2)
+    plt.pause(0.01)
 
 def plot_series(t,series_data,s,obs_data):
     # plot timeseries from model and observations
@@ -164,11 +169,11 @@ def plot_series(t,series_data,s,obs_data):
     nseries=len(loc_names)
     for i in range(nseries):
         fig,ax=plt.subplots()
-        ax.plot(t,series_data[i,:],'b-')
+        ax.plot(t,series_data[i,:],'b-') #blue is calculated
         ax.set_title(loc_names[i])
         ax.set_xlabel('time')
         ntimes=min(len(t),obs_data.shape[1])
-        ax.plot(t[0:ntimes],obs_data[i,0:ntimes],'k-')
+        ax.plot(t[0:ntimes],obs_data[i,0:ntimes],'k-') #black is observed
         figname = ("%s.png"%loc_names[i]).replace(' ','_')
         plt.savefig(path_to_figs / figname)
 
