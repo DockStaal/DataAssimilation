@@ -50,8 +50,7 @@ def settings():
     s['L']=L
     n=100 #number of cells
     s['n']=n    
-    s['sigma_w'] = 0.4
-    s['ensemble_size'] = 10
+    s['ensemble_size'] = 1000
     # Grid(staggered water levels at 0 (boundary) dx 2dx ... (n-1)dx
     #      velocities at dx/2, 3dx/2, (n-1/2)dx
     dx=L/(n+0.5)
@@ -81,6 +80,11 @@ def settings():
     s['h_left'] = np.interp(t,bound_t,bound_values)        
     T = 6
     s['alpha'] = np.exp(-dt/T)
+    s['sigma_w'] = 0.3
+    s['ensemble_cov'] = np.eye(2*n) * 0.01
+    s['ilocs_size'] = 5
+    s['observation_cov'] = np.eye(s['ilocs_size']) * 0.01 #TODO: 5 here is the number of places of observation
+                                           #hence, need to to change it in exercise 9!! 
     return s
 
 def initialize(settings): #return (h,u,t) at initial time 
@@ -144,11 +148,6 @@ def initialize(settings): #return (h,u,t) at initial time
     B=B.tocsr()
     settings['A']=A #cache for later use
     settings['B']=B
-
-
-
-
-
     return (x,t[0])
 
 def timestep(x,i,settings): #return (h,u) one timestep later
@@ -170,11 +169,13 @@ def plot_state(fig,x,i,s):
     fig.clear()
     xh=s['x_h']
     ax1=fig.add_subplot(211)
-    ax1.plot(xh,x[0::2])
+    for i in range(x.shape[1]):
+        ax1.plot(xh,x[0::2,i])
     ax1.set_ylabel('h')
     xu=s['x_u']
     ax2=fig.add_subplot(212)
-    ax2.plot(xu,x[1::2])
+    for i in range(x.shape[1]):
+        ax2.plot(xu,x[1::2,i])
     ax2.set_ylabel('u')
     figname = "fig_map_%3.3d.png"%i
     plt.savefig(path_to_figs / figname)
@@ -188,10 +189,12 @@ def plot_series(t,series_data,s,obs_data):
     for i in range(nseries):
         fig,ax=plt.subplots()
         for j in range(s['ensemble_size']):
-            ax.plot(t,series_data[i,j,:],'b-',linewidth=0.5) #blue is calculated
+            ax.plot(t,series_data[i,j,:],linewidth=0.5) #blue is calculated
         ax.set_title(loc_names[i])
         ax.set_xlabel('time')
         ntimes=min(len(t),obs_data.shape[1])
+        mean = np.average(series_data[i,:,:],axis = 0)
+        ax.plot(t, mean,'b-')
         ax.plot(t[0:ntimes],obs_data[i,0:ntimes],'k-') #black is observed
         figname = ("%s.png"%loc_names[i]).replace(' ','_')
         plt.savefig(path_to_figs / figname)
@@ -223,22 +226,10 @@ def simulate():
 
     (x,t0)=initialize(s)
     # Generating H-matrix for observations
-    H = np.zeros((ilocs.shape[0], x.size))
-    H[(np.arange(9),ilocs)] = 1
+    H = np.zeros((s['ilocs_size'],s['n']*2))
+    H[(np.arange(5),ilocs[:5])] = 1
     s['H'] = H
 
-
-
-    t=s['t'][:] #[:40]
-    times=s['times'][:] #[:40]
-    series_data=np.zeros((len(ilocs),s['ensemble_size'],len(t)))
-    for i in np.arange(1,len(t)):
-        print('timestep %d'%i)
-        x=timestep(x,i,s)
-        #plot_state(fig1,x[:,0],i,s) #show spatial plot; nice but slow
-        series_data[:,:,i]=x[ilocs,:]
-        
-    #load observations
     (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_cadzand.txt')
     observed_data=np.zeros((len(ilocs),len(obs_times)))
     observed_data[0,:]=obs_values[:]
@@ -251,6 +242,17 @@ def simulate():
     (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_bath.txt')
     observed_data[4,:]=obs_values[:]
 
+    t=s['t'][:] #[:40]
+    times=s['times'][:] #[:40]
+    series_data=np.zeros((len(ilocs),s['ensemble_size'],len(t)))
+    for i in np.arange(1,len(t)):
+        print('timestep %d'%i)
+        x=timestep(x,i,s)
+        x=Ensemble_Kalman_Filter(x,observed_data[:5,i].reshape(5,1),s)
+        #plot_state(fig1,x,i,s) #show spatial plot; nice but slow
+        series_data[:,:,i]=x[ilocs,:]
+        
+    #load observations
     #Calculate RMSE
     #Note: All observered data has same amount of observations
     #ntimes = min(len(t), observed_data.shape[1])
@@ -263,7 +265,9 @@ def simulate():
     plot_series(times,series_data,s,observed_data)
 
 
-def Ensemble_Kalman_Filter(ensemble_predicted,observations,ensemble_cov,observation_cov,settings):
+def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
+    ensemble_cov = settings['ensemble_cov']
+    observation_cov = settings['observation_cov']
     member_dim, ensemble_size = ensemble_predicted.shape
     #Note that ensemble is a (nx,N_esemble) array, thus each member is a col. vector.
     #Observations can be passed as (N_observation,1) column vector
@@ -277,7 +281,6 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,ensemble_cov,observat
     #Note: State is passed as a row vector, thus transposition for Covariance
     C_pertubed = (x_pertubed - m_pertubed) @ (x_pertubed - m_pertubed).transpose()\
                  / (ensemble_predicted.shape[0] - 1)
-
     #Analysis step
     S = settings['H'] @ C_pertubed @ settings['H'].transpose() \
         + observation_cov
@@ -286,7 +289,7 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,ensemble_cov,observat
 
     #Pertube observations
     y_pertubed = observations + np.random.multivariate_normal\
-        (np.zeros(settings['ilocs'].size),observation_cov,size=(ensemble_size)).transpose()
+        (np.zeros(settings['ilocs_size']),observation_cov,size=(ensemble_size)).transpose()
 
     #Update current state estimate in ensemble form
     x_update = (np.eye(member_dim) - K @ settings['H']) @ x_pertubed + K @ y_pertubed
@@ -298,4 +301,4 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,ensemble_cov,observat
 #main program
 if __name__ == "__main__":
     simulate()
-    #plt.show()
+    plt.show()
