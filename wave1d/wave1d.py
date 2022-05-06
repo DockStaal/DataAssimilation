@@ -169,7 +169,7 @@ def plot_series(t,series_data,s,obs_data):
     nseries=len(loc_names)
     for i in range(nseries):
         fig,ax=plt.subplots()
-        ax.plot(t,series_data[i,:],'b-') #blue is calculated
+        ax.plot(t,series_data[i,:],'xb-') #blue is calculated
         ax.set_title(loc_names[i])
         ax.set_xlabel('time')
         ntimes=min(len(t),obs_data.shape[1])
@@ -208,7 +208,7 @@ def simulate():
     for i in np.arange(1,len(t)):
         print('timestep %d'%i)
         x=timestep(x,i,s)
-        plot_state(fig1,x,i,s) #show spatial plot; nice but slow
+        #plot_state(fig1,x,i,s) #show spatial plot; nice but slow
         series_data[:,i]=x[ilocs]
         
     #load observations
@@ -223,6 +223,18 @@ def simulate():
     observed_data[3,:]=obs_values[:]
     (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_bath.txt')
     observed_data[4,:]=obs_values[:]
+
+    #Calculate RMSE
+    #Note: All observered data has same amount of observations
+    ntimes = min(len(t), observed_data.shape[1])
+    RMSE = np.linalg.norm(series_data - observed_data[:,:ntimes],axis = 1) / np.sqrt(ntimes)
+    Bias = np.average(series_data,axis=1) - np.average(observed_data,axis=1)
+
+
+    print('RMSE:',RMSE[:5])
+    print('Bias:',Bias[:5])
+
+
 
     plot_series(times,series_data,s,observed_data)
 
