@@ -28,6 +28,8 @@ from scipy.sparse import spdiags
 from scipy.sparse.linalg import spsolve
 import matplotlib.pyplot as plt
 from pathlib import Path
+
+from sklearn import ensemble
 import timeseries
 import dateutil.parser
 import datetime
@@ -48,6 +50,8 @@ def settings():
     s['L']=L
     n=100 #number of cells
     s['n']=n    
+    s['sigma_w'] = 0.4
+    s['ensemble_size'] = 10
     # Grid(staggered water levels at 0 (boundary) dx 2dx ... (n-1)dx
     #      velocities at dx/2, 3dx/2, (n-1/2)dx
     dx=L/(n+0.5)
@@ -74,29 +78,22 @@ def settings():
     bound_t=np.zeros(len(bound_times))
     for i in np.arange(len(bound_times)):
         bound_t[i]=(bound_times[i]-reftime).total_seconds()
-    s['h_left'] = np.interp(t,bound_t,bound_values)
-
-
+    s['h_left'] = np.interp(t,bound_t,bound_values)        
+    T = 6
+    s['alpha'] = np.exp(-dt/T)
     return s
-
-def timestep(x,i,settings): #return (h,u) one timestep later
-    # take one timestep
-    temp=x.copy() 
-    A=settings['A']
-    B=settings['B']
-    rhs=B.dot(temp) #B*x
-    rhs[0]=settings['h_left'][i] #left boundary
-    newx=spsolve(A,rhs)
-    return newx
 
 def initialize(settings): #return (h,u,t) at initial time 
     #compute initial fields and cache some things for speed
     h_0=settings['h_0']
     u_0=settings['u_0']
     n=settings['n']
-    x=np.zeros(2*n) #order h[0],u[0],...h[n],u[n]
-    x[0::2]=u_0[:]
-    x[1::2]=h_0[:]
+    ensemble_size = settings['ensemble_size']
+    x=np.zeros((2*n,ensemble_size)) #order h[0],u[0],...h[n],u[n]
+    #NOTE: There was a mistake here. Was ordered differently!!!!
+    for i in range(ensemble_size):
+        x[0::2,i]=h_0[:]
+        x[1::2,i]=u_0[:]
     #time
     t=settings['t']
     reftime=settings['reftime']
@@ -154,6 +151,20 @@ def initialize(settings): #return (h,u,t) at initial time
 
     return (x,t[0])
 
+def timestep(x,i,settings): #return (h,u) one timestep later
+    # take one timestep
+    temp=x.copy() 
+    A=settings['A']
+    B=settings['B']
+    sigma_w=settings['sigma_w']
+    rhs=B.dot(temp) #B*x
+    rhs[0,:]=settings['h_left'][i] #left boundary
+    #apply forcing
+    if sigma_w > 0:
+        rhs[0,:]=rhs[0,:]+np.random.randn(1,np.shape(temp)[1])*sigma_w
+    newx=spsolve(A,rhs)
+    return newx
+
 def plot_state(fig,x,i,s):
     #plot all waterlevels and velocities at one time
     fig.clear()
@@ -176,7 +187,8 @@ def plot_series(t,series_data,s,obs_data):
     nseries=len(loc_names)
     for i in range(nseries):
         fig,ax=plt.subplots()
-        ax.plot(t,series_data[i,:],'xb-') #blue is calculated
+        for j in range(s['ensemble_size']):
+            ax.plot(t,series_data[i,j,:],'b-',linewidth=0.5) #blue is calculated
         ax.set_title(loc_names[i])
         ax.set_xlabel('time')
         ntimes=min(len(t),obs_data.shape[1])
@@ -219,22 +231,12 @@ def simulate():
 
     t=s['t'][:] #[:40]
     times=s['times'][:] #[:40]
-    series_data=np.zeros((len(ilocs),len(t)))
+    series_data=np.zeros((len(ilocs),s['ensemble_size'],len(t)))
     for i in np.arange(1,len(t)):
         print('timestep %d'%i)
         x=timestep(x,i,s)
-
-        #Test Kalman
-        #x_ensemble_test = np.ones((x.size,3))
-        #x_cov = np.eye(x.size)
-        #y_cov = np.eye(s['ilocs'].size)
-        #y_test = np.ones((9,1))
-        #x_new = Ensemble_Kalman_Filter(x_ensemble_test,y_test,x_cov,y_cov,s)
-
-
-
-        #plot_state(fig1,x,i,s) #show spatial plot; nice but slow
-        series_data[:,i]=x[ilocs]
+        #plot_state(fig1,x[:,0],i,s) #show spatial plot; nice but slow
+        series_data[:,:,i]=x[ilocs,:]
         
     #load observations
     (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_cadzand.txt')
@@ -251,16 +253,13 @@ def simulate():
 
     #Calculate RMSE
     #Note: All observered data has same amount of observations
-    ntimes = min(len(t), observed_data.shape[1])
-    RMSE = np.linalg.norm(series_data - observed_data[:,:ntimes],axis = 1) / np.sqrt(ntimes)
-    Bias = np.average(series_data,axis=1) - np.average(observed_data,axis=1)
+    #ntimes = min(len(t), observed_data.shape[1])
+    #RMSE = np.linalg.norm(series_data - observed_data[:,:ntimes],axis = 1) / np.sqrt(ntimes)
+    #Bias = np.average(series_data,axis=1) - np.average(observed_data,axis=1)
 
 
-    print('RMSE:',RMSE[:5])
-    print('Bias:',Bias[:5])
-
-
-
+    #print('RMSE:',RMSE[:5])
+    #print('Bias:',Bias[:5])
     plot_series(times,series_data,s,observed_data)
 
 
