@@ -74,7 +74,9 @@ def settings():
     bound_t=np.zeros(len(bound_times))
     for i in np.arange(len(bound_times)):
         bound_t[i]=(bound_times[i]-reftime).total_seconds()
-    s['h_left'] = np.interp(t,bound_t,bound_values)        
+    s['h_left'] = np.interp(t,bound_t,bound_values)
+
+
     return s
 
 def timestep(x,i,settings): #return (h,u) one timestep later
@@ -145,6 +147,11 @@ def initialize(settings): #return (h,u,t) at initial time
     B=B.tocsr()
     settings['A']=A #cache for later use
     settings['B']=B
+
+
+
+
+
     return (x,t[0])
 
 def plot_state(fig,x,i,s):
@@ -200,14 +207,32 @@ def simulate():
     s['xlocs_velocity']=xlocs_velocity
     s['ilocs']=ilocs
     s['loc_names']=loc_names
-    #
+
+
     (x,t0)=initialize(s)
+    # Generating H-matrix for observations
+    H = np.zeros((ilocs.shape[0], x.size))
+    H[(np.arange(9),ilocs)] = 1
+    s['H'] = H
+
+
+
     t=s['t'][:] #[:40]
     times=s['times'][:] #[:40]
     series_data=np.zeros((len(ilocs),len(t)))
     for i in np.arange(1,len(t)):
         print('timestep %d'%i)
         x=timestep(x,i,s)
+
+        #Test Kalman
+        #x_ensemble_test = np.ones((x.size,3))
+        #x_cov = np.eye(x.size)
+        #y_cov = np.eye(s['ilocs'].size)
+        #y_test = np.ones((9,1))
+        #x_new = Ensemble_Kalman_Filter(x_ensemble_test,y_test,x_cov,y_cov,s)
+
+
+
         #plot_state(fig1,x,i,s) #show spatial plot; nice but slow
         series_data[:,i]=x[ilocs]
         
@@ -238,7 +263,40 @@ def simulate():
 
     plot_series(times,series_data,s,observed_data)
 
+
+def Ensemble_Kalman_Filter(ensemble_predicted,observations,ensemble_cov,observation_cov,settings):
+    member_dim, ensemble_size = ensemble_predicted.shape
+    #Note that ensemble is a (nx,N_esemble) array, thus each member is a col. vector.
+    #Observations can be passed as (N_observation,1) column vector
+
+    #Predcition step
+    #Pertubing essemble state with noise
+    x_pertubed = ensemble_predicted \
+                 + np.random.multivariate_normal(np.zeros(member_dim),ensemble_cov,size=(ensemble_size)).transpose()
+    m_pertubed = np.average(x_pertubed,axis = 1).reshape(member_dim,1)
+
+    #Note: State is passed as a row vector, thus transposition for Covariance
+    C_pertubed = (x_pertubed - m_pertubed) @ (x_pertubed - m_pertubed).transpose()\
+                 / (ensemble_predicted.shape[0] - 1)
+
+    #Analysis step
+    S = settings['H'] @ C_pertubed @ settings['H'].transpose() \
+        + observation_cov
+    #Compute Gain
+    K = C_pertubed @ settings['H'].transpose() @ np.linalg.inv(S)
+
+    #Pertube observations
+    y_pertubed = observations + np.random.multivariate_normal\
+        (np.zeros(settings['ilocs'].size),observation_cov,size=(ensemble_size)).transpose()
+
+    #Update current state estimate in ensemble form
+    x_update = (np.eye(member_dim) - K @ settings['H']) @ x_pertubed + K @ y_pertubed
+
+    return x_update
+
+
+
 #main program
 if __name__ == "__main__":
     simulate()
-    plt.show()
+    #plt.show()
