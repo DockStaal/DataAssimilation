@@ -83,8 +83,9 @@ def settings():
     s['sigma_w'] = 0.3
     s['ensemble_cov'] = np.eye(2*n) * 0.01
     s['ilocs_size'] = 5
-    s['observation_cov'] = np.eye(s['ilocs_size']) * 0.01 #TODO: 5 here is the number of places of observation
-                                           #hence, need to to change it in exercise 9!! 
+    #TODO: 5 here is the number of places of observation hence, 
+    #need to to change it in exercise 9!! 
+    s['observation_cov'] = np.eye(s['ilocs_size']) * 0.01 
     return s
 
 def initialize(settings): #return (h,u,t) at initial time 
