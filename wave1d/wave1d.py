@@ -50,7 +50,7 @@ def settings():
     s['L']=L
     n=100 #number of cells
     s['n']=n    
-    s['ensemble_size'] = 1000
+    s['ensemble_size'] = 400
     # Grid(staggered water levels at 0 (boundary) dx 2dx ... (n-1)dx
     #      velocities at dx/2, 3dx/2, (n-1/2)dx
     dx=L/(n+0.5)
