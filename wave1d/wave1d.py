@@ -82,7 +82,7 @@ def settings():
     s['h_left'] = np.interp(t,bound_t,bound_values)
     T = 6 * 60 * 60
     s['alpha'] = np.exp(-dt/T)
-    s['sigma_w'] = 0.2 * np.sqrt((1 - s['alpha']**2))
+    s['sigma_w'] = 0.2 * np.sqrt((1 - s['alpha']**2)) * 0
     s['ensemble_noise'] = s['sigma_w']
     s['ilocs_size'] = 5
 
@@ -91,9 +91,9 @@ def settings():
 
     #Enable Twin experiment
     #Adds an extra realization to the enseble, that will not be run through the kalman filter.
-    s['ensemble_size'] = 50
-    s['enable_state_plot'] = True
-    s['enable_kalman'] = True
+    s['ensemble_size'] = 1
+    s['enable_state_plot'] = False
+    s['enable_kalman'] = False
     s['enable_twin'] = False
     s['estimate_RMSE_bias']  = True
     s['ensemble_size'] = s['ensemble_size'] + s['enable_twin'] * 1
@@ -102,6 +102,9 @@ def settings():
     if s['h_left_zero']:
         print('Bondary forcing around zero')
     s['ensemble_spread_determination'] = True
+    #Cut off series from some index forward (including this index)
+    s['cut_series'] = True
+    s['series_cut_off_index'] = 0
                                            #hence, need to to change it in exercise 9!! 
     return s
 
@@ -209,7 +212,6 @@ def plot_state(fig,x,i,s,stat_curves = None):
         ax1.plot(xh,x[0::2,i],'k-',alpha=0.1)
 
 
-
     ax1.set_ylabel('h')
     #PLotting measurement lines
     xposition = xh[(s['ilocs']/2)[:5].astype(int)]
@@ -225,13 +227,20 @@ def plot_state(fig,x,i,s,stat_curves = None):
 
     if stat_curves is not None:
         ax1.plot(xh, stat_curves[0][0::2],'b--')
-        ax1.plot(xh, stat_curves[1][0::2], 'b--')
-        ax1.plot(xh, stat_curves[2][0::2], 'b--')
-        ax2.plot(xh, stat_curves[0][1::2],'k--')
-        ax2.plot(xh, stat_curves[1][1::2], 'k--')
+        ax1.plot(xh, stat_curves[1][0::2], 'g--')
+        ax1.plot(xh, stat_curves[2][0::2], 'k--')
+        ax1.plot(xh, stat_curves[3][0::2],'b--')
+        ax1.plot(xh, stat_curves[4][0::2], 'g--')
+
+
+        ax2.plot(xh, stat_curves[0][1::2],'b--')
+        ax2.plot(xh, stat_curves[1][1::2], 'b--')
         ax2.plot(xh, stat_curves[2][1::2], 'k--')
+        ax2.plot(xh, stat_curves[3][1::2],'g--')
+        ax2.plot(xh, stat_curves[4][1::2], 'g--')
+
         if s['enable_twin'] == True:
-            ax1.plot(xh, stat_curves[3][0::2], 'r:')
+            ax1.plot(xh, stat_curves[-1][0::2], 'r:')
 
 
     figname = "fig_map_%3.3d.png"%i
@@ -249,7 +258,7 @@ def plot_series(t,series_data,s,obs_data,stat_curves = None):
     for i in range(nseries):
         fig,ax=plt.subplots()
         for j in range(series_data.shape[1]):#(s['ensemble_size']):
-            ax.plot(t,series_data[i,j,:],linewidth=0.5,alpha=0.1) #blue is calculated
+            ax.plot(t,series_data[i,j,:],linewidth=0.5,alpha=0.8) #blue is calculated
         if stat_curves is not None:
             ax.plot(t, stat_curves[0][i], 'r--')
             ax.plot(t, stat_curves[1][i], 'sr--')
@@ -323,6 +332,8 @@ def simulate(identical_twin = False):
     t=s['t'][:] #[:40]
     times=s['times'][:] #[:40]
     series_data=np.zeros((len(ilocs),s['ensemble_size'],len(t)))
+
+    #Note: This is how it is originally, this means the series data is not filled at timestep 0.
     for i in np.arange(1,len(t)):
         print('timestep %d'%i)
         x=timestep(x,i,s)
@@ -333,24 +344,40 @@ def simulate(identical_twin = False):
             observed_data = np.hstack((observed_data,observed_data_current_time))
 
             x[:,1:], en_mean,en_var = Ensemble_Kalman_Filter(x[:,1:],observed_data_current_time[:5,0].reshape(5,1),s)
-            x_upper = np.mean(x[:,1:],axis=1).reshape(x_twin.size,1)  + np.std(x[:,1:],axis=1).reshape((en_mean.size,1)) * 2
-            x_lower = np.mean(x[:,1:],axis=1).reshape(x_twin.size,1)  - np.std(x[:,1:],axis=1).reshape((en_mean.size,1)) * 2
+
+            # Kalman bounds
+            x_upper_k  = en_mean  + np.sqrt(en_var)
+            x_lower_k = en_mean - np.sqrt(en_var)
+
+            #Actual observed bounds
+            x_upper_m  = en_mean  + np.std(x[:,1:], axis=1).reshape(x[:,1:].shape[0],1)
+            x_lower_m = en_mean - np.std(x[:,1:], axis=1).reshape(x[:,1:].shape[0],1)
+
             if s['enable_state_plot']:
-                plot_state(fig1, x[:,1:], None, s, stat_curves=(x_lower, en_mean, x_upper,x[:,0]))  # show spatial plot; nice but slow
+                plot_state(fig1, x[:,1:], None, s, stat_curves=(x_lower_k,x_lower_m, en_mean, x_upper_k,x_upper_m))  # show spatial plot; nice but slow
         else:
 
             x, en_mean, en_var = Ensemble_Kalman_Filter(x, observed_data[:5, i].reshape(5, 1), s)
+            # Kalman bounds
+            x_upper_k  = en_mean  + np.sqrt(en_var)
+            x_lower_k = en_mean - np.sqrt(en_var)
 
-
-            x_upper  = en_mean  + np.sqrt(en_var)
-            x_lower = en_mean - np.sqrt(en_var)
+            #Actual observed bounds
+            x_upper_m  = en_mean  + np.std(x, axis=1)
+            x_lower_m = en_mean - np.std(x, axis=1)
 
             if s['enable_state_plot']:
-                plot_state(fig1,x,None,s,stat_curves=(x_lower,en_mean,x_upper)) #show spatial plot; nice but slow
+                plot_state(fig1,x,None,s,stat_curves=(x_lower_k, x_lower_m,en_mean,x_upper_k,x_lower_m)) #show spatial plot; nice but slow
         #Bounds:
 
 
         series_data[:,:,i]=x[ilocs,:]
+    if s['cut_series']:
+        series_data = series_data[0:,0:,s['series_cut_off_index']:]
+        observed_data = observed_data[0:,s['series_cut_off_index']:]
+        t = t[s['series_cut_off_index']:]
+        times = times[s['series_cut_off_index']:]
+
     #Estimate the RMSE and Bias
     if s['estimate_RMSE_bias']  == True:
         estimate_rmse(series_data,observed_data,t,s)
@@ -428,8 +455,8 @@ def estimate_rmse(series_data, observed_data, t,settings):
 
     print('Note: Only 5 locations are available in terms of observations, all water level')
     ntimes = min(len(t), observed_data.shape[1])
-    RMSE = np.linalg.norm(series_data.reshape(series_data.shape[0],series_data.shape[1]) - observed_data[:,:ntimes],axis = 1) / np.sqrt(ntimes - 1)
-    RMSE_Global = np.linalg.norm(series_data.reshape(series_data.shape[0],series_data.shape[1])[:5].flatten() - observed_data[:5,:ntimes].flatten()) / np.sqrt(observed_data.size - 1)
+    RMSE = np.linalg.norm(series_data.reshape(series_data.shape[0],series_data.shape[1]) - observed_data[:,:ntimes],axis = 1) / np.sqrt(ntimes)
+    RMSE_Global = np.linalg.norm(series_data.reshape(series_data.shape[0],series_data.shape[1])[:5].flatten() - observed_data[:5,:ntimes].flatten()) / np.sqrt(observed_data.size)
     Bias = np.average(series_data[:5],axis=1).flatten() - np.average(observed_data[:5,:ntimes],axis=1)
 
 
