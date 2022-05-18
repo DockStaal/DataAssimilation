@@ -64,6 +64,7 @@ def settings():
     s['u_0'] = np.zeros(n)    
     # time
     t_f=2.*days_to_seconds #end of simulation
+    #t_f =   t_f * 100
     dt=10.*minutes_to_seconds
     s['dt']=dt
     reftime=dateutil.parser.parse("201312050000") #times in secs relative
@@ -78,33 +79,42 @@ def settings():
     bound_t=np.zeros(len(bound_times))
     for i in np.arange(len(bound_times)):
         bound_t[i]=(bound_times[i]-reftime).total_seconds()
-    print('Note: For debugging left boundary set to zero')
+
     s['h_left'] = np.interp(t,bound_t,bound_values)
     T = 6 * 60 * 60
     s['alpha'] = np.exp(-dt/T)
-    s['sigma_w'] = 0.2 * np.sqrt((1 - s['alpha']**2)) * 0
+
+    s['sigma_w'] = 0.2 * np.sqrt((1 - s['alpha']**2))
     s['ensemble_noise'] = s['sigma_w']
     s['ilocs_size'] = 5
-
-    s['observation_cov'] = np.eye(s['ilocs_size']) * 0.2**2
+    #[0.19947064 0.19788146 0.20207744 0.20950166 0.21756491] obtained with 5000 ensemble members, t_f = t_f * 20
+    s['observation_cov'] = np.diag(np.array([0.19947064, 0.19788146, 0.20207744, 0.20950166, 0.21756491])**2)
+    #s['observation_cov'] = np.eye(s['ilocs_size']) * 0.2**2
     s['N'] = 0
 
     #Enable Twin experiment
     #Adds an extra realization to the enseble, that will not be run through the kalman filter.
-    s['ensemble_size'] = 1
+    s['ensemble_size'] = 50
     s['enable_state_plot'] = False
-    s['enable_kalman'] = False
-    s['enable_twin'] = False
+    s['enable_kalman'] = True
+    s['enable_twin'] = True
     s['estimate_RMSE_bias']  = True
     s['ensemble_size'] = s['ensemble_size'] + s['enable_twin'] * 1
     s['h_left_zero'] = False
+    #deactivate boundary noise
+    s['zero_boundary_noise'] = False
+    s['sigma_w'] = s['sigma_w'] * (1 - s['zero_boundary_noise'])
+
     s['h_left'] = s['h_left'] * (1 - s['h_left_zero'])
     if s['h_left_zero']:
         print('Bondary forcing around zero')
     s['ensemble_spread_determination'] = True
+    s['spread_vs_kalman_var'] = False
+    s['plot_kalman_gain'] = False
+
     #Cut off series from some index forward (including this index)
     s['cut_series'] = True
-    s['series_cut_off_index'] = 0
+    s['series_cut_off_index'] = 1
                                            #hence, need to to change it in exercise 9!! 
     return s
 
@@ -195,7 +205,10 @@ def timestep(x,i,settings): #return (h,u) one timestep later
     if sigma_w > 0:
         N_old = settings['N']
         N_new = N_old * settings['alpha']  + np.random.randn(1,np.shape(temp)[1]) * sigma_w
-        rhs[0,:]= rhs[0,:]  + N_new
+        if settings['enable_twin'] == True:
+            rhs[0, 1:] = rhs[0, 1:] + N_new[:,1:]
+        else:
+            rhs[0,:]= rhs[0,:]  + N_new
         settings['N'] = N_new
     newx=spsolve(A,rhs)
     return newx.reshape((x.shape))
@@ -207,9 +220,9 @@ def plot_state(fig,x,i,s,stat_curves = None):
 
     xh=s['x_h']
     ax1=fig.add_subplot(211)
-
+    #ax1.set_ylim(-4,4)
     for i in range(x.shape[1]):
-        ax1.plot(xh,x[0::2,i],'k-',alpha=0.1)
+        ax1.plot(xh,x[0::2,i],'k-',alpha=0.01)
 
 
     ax1.set_ylabel('h')
@@ -248,6 +261,12 @@ def plot_state(fig,x,i,s,stat_curves = None):
 
 
 
+    plt.draw()
+    plt.pause(0.5)
+
+def plot_K_gain(fig,K):
+    fig.clear()
+    plt.plot(K)
     plt.draw()
     plt.pause(0.5)
 
@@ -314,6 +333,7 @@ def simulate(identical_twin = False):
     if s['enable_twin'] == True:
         #0 index is Twin
         x_twin = x[:,:1]
+        twin_rmse_list = []
         observed_data_current_time = x_twin[s['ilocs'],:]
         observed_data = observed_data_current_time
     else:
@@ -350,11 +370,14 @@ def simulate(identical_twin = False):
             x_lower_k = en_mean - np.sqrt(en_var)
 
             #Actual observed bounds
-            x_upper_m  = en_mean  + np.std(x[:,1:], axis=1).reshape(x[:,1:].shape[0],1)
-            x_lower_m = en_mean - np.std(x[:,1:], axis=1).reshape(x[:,1:].shape[0],1)
+            x_upper_m  = en_mean  + np.std(x[:,1:], axis=1,ddof=1).reshape(x[:,1:].shape[0],1)
+            x_lower_m = en_mean - np.std(x[:,1:], axis=1,ddof=1).reshape(x[:,1:].shape[0],1)
+            twin_rmse = np.linalg.norm(x_twin - en_mean.flatten())/np.sqrt(x_twin.size)
+            twin_rmse_list.append(twin_rmse)
+
 
             if s['enable_state_plot']:
-                plot_state(fig1, x[:,1:], None, s, stat_curves=(x_lower_k,x_lower_m, en_mean, x_upper_k,x_upper_m))  # show spatial plot; nice but slow
+                plot_state(fig1, x[:,1:], None, s, stat_curves=(x_lower_k,x_lower_m, en_mean, x_upper_k,x_upper_m,x_twin))  # show spatial plot; nice but slow
         else:
 
             x, en_mean, en_var = Ensemble_Kalman_Filter(x, observed_data[:5, i].reshape(5, 1), s)
@@ -363,15 +386,25 @@ def simulate(identical_twin = False):
             x_lower_k = en_mean - np.sqrt(en_var)
 
             #Actual observed bounds
-            x_upper_m  = en_mean  + np.std(x, axis=1)
-            x_lower_m = en_mean - np.std(x, axis=1)
+            x_upper_m  = en_mean  + np.std(x, axis=1,ddof=1)
+            x_lower_m = en_mean - np.std(x, axis=1,ddof=1)
+
 
             if s['enable_state_plot']:
                 plot_state(fig1,x,None,s,stat_curves=(x_lower_k, x_lower_m,en_mean,x_upper_k,x_lower_m)) #show spatial plot; nice but slow
+        if s['spread_vs_kalman_var'] and s['enable_kalman']:
+            print('Discrepancy spread vs kalman uncertainty:', np.average((np.std(x[:-1,1:], axis=1,ddof=1)**2)[:]/en_var[:-1].flatten()))
+
         #Bounds:
 
 
         series_data[:,:,i]=x[ilocs,:]
+    if s['enable_twin'] == True:
+        series_data = series_data[:,1:,:]
+        twin_rmse_list = np.asarray(twin_rmse)
+        twin_rmse_avg = np.average(twin_rmse_list)
+        print('State RMSE against twin:',twin_rmse_avg)
+
     if s['cut_series']:
         series_data = series_data[0:,0:,s['series_cut_off_index']:]
         observed_data = observed_data[0:,s['series_cut_off_index']:]
@@ -381,11 +414,12 @@ def simulate(identical_twin = False):
     #Estimate the RMSE and Bias
     if s['estimate_RMSE_bias']  == True:
         estimate_rmse(series_data,observed_data,t,s)
+
     if s['ensemble_spread_determination']:
         if s['enable_twin']:
-            ensemble_series = series_data[:,1:,0:][:5,:,:]
+            ensemble_series = series_data[:,1:,s['series_cut_off_index'] * s['cut_series']:][:5,:,:]
         else:
-            ensemble_series = series_data[:5,:,:]
+            ensemble_series = series_data[:5,:,s['series_cut_off_index'] * s['cut_series']:]
         obs_mean = np.average(ensemble_series,axis=1)
         obs_std = np.std(ensemble_series,axis=1)
         average_std = np.average(obs_std,axis=1)
@@ -427,7 +461,7 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
 
     #Note: State is passed as a column vector
     C_pertubed = (x_pertubed - m_pertubed) @ (x_pertubed - m_pertubed).transpose()\
-                 / (ensemble_predicted.shape[0] - 1)
+                 / (ensemble_predicted.shape[1] - 1)
     #Analysis step
     S = settings['H'] @ C_pertubed @ settings['H'].transpose() \
         + observation_cov
@@ -440,8 +474,15 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
 
     #Update current state estimate in ensemble form
     x_update = (np.eye(member_dim) - K @ settings['H']) @ x_pertubed + K @ y_pertubed
+    m_update =  np.average(x_update,axis = 1).reshape(member_dim,1)
+    C_update = (x_update - m_update) @ (x_update - m_update).transpose()\
+                 / (ensemble_predicted.shape[1] - 1)
 
-    return x_update, np.average(x_update,axis = 1).reshape(member_dim,1), np.diag(C_pertubed).reshape(member_dim,1)
+    if  settings['plot_kalman_gain']:
+        plt.plot(K)
+        plt.show()
+
+    return x_update,m_update , np.diag(C_update).reshape(member_dim,1)
 
 def estimate_rmse(series_data, observed_data, t,settings):
     #load observations
