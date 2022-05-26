@@ -88,7 +88,8 @@ def settings():
     s['ensemble_noise'] = s['sigma_w']
     s['ilocs_size'] = 5
     #[0.19947064 0.19788146 0.20207744 0.20950166 0.21756491] obtained with 5000 ensemble members, t_f = t_f * 20
-    s['observation_cov'] = np.eye(s['ilocs_size'])*0.2**2#np.diag(np.array([0.19947064, 0.19788146, 0.20207744, 0.20950166, 0.21756491]))**2
+    s['observation_noise'] = 0.2
+    s['observation_cov'] = np.eye(s['ilocs_size']) * s['observation_noise']**2
     #s['observation_cov'] = np.eye(s['ilocs_size']) * 0.2**2
     s['N'] = 0
 
@@ -101,6 +102,7 @@ def settings():
     s['estimate_RMSE_bias']  = True
     s['ensemble_size'] = s['ensemble_size'] + s['enable_twin'] * 1
     s['h_left_zero'] = False
+
     #deactivate boundary noise
     s['zero_boundary_noise'] = False
     s['sigma_w'] = s['sigma_w'] * (1 - s['zero_boundary_noise'])
@@ -112,6 +114,7 @@ def settings():
     s['spread_vs_kalman_var'] = False
     s['plot_kalman_gain'] = False
     s['adapted_ic'] = False
+    s['extended_state'] = True
 
     #Cut off series from some index forward (including this index)
     s['cut_series'] = True
@@ -201,6 +204,7 @@ def initialize(settings): #return (h,u,t) at initial time
     return (x, t[0])
 
 def timestep(x,i,settings): #return (h,u) one timestep later
+
     # take one timestep
     temp=x.copy() 
     A=settings['A']
@@ -217,7 +221,18 @@ def timestep(x,i,settings): #return (h,u) one timestep later
         else:
             rhs[0,:]= rhs[0,:]  + N_new
         settings['N'] = N_new
-    newx=spsolve(A,rhs)
+        #Avoiding changing linear system entirely
+        newx = spsolve(A,rhs)
+        if settings['extended_state'] == True:
+            # Returning extended state for kalman filtering
+            newx = np.vstack((newx, settings['N']))
+
+        return  newx
+    else:
+        newx = spsolve(A,rhs)
+
+
+
     return newx.reshape((x.shape))
 
 def plot_state(fig,x,i,s,stat_curves = None):
@@ -333,14 +348,15 @@ def simulate(identical_twin = False):
     (x,t0)=initialize(s)
 
     # Generating H-matrix for observations
-    H = np.zeros((s['ilocs_size'],s['n']*2))
+    H = np.zeros((s['ilocs_size'],s['n']*2 + s['extended_state']))
     H[(np.arange(5),ilocs[:5])] = 1
 
     s['H'] = H
 
     if s['enable_twin'] == True:
         #0 index is Twin
-        x_twin = x[:,:1]
+
+        x_twin = x[:2*s['n'],:1]
         twin_rmse_list = []
         observed_data_current_time = x_twin[s['ilocs'],:]
         observed_data = observed_data_current_time
@@ -364,29 +380,33 @@ def simulate(identical_twin = False):
     #Note: This is how it is originally, this means the series data is not filled at timestep 0.
     for i in np.arange(1,len(t)):
         print('timestep %d'%i)
+        #Either extended state or not, depending on added noise and setting
         x=timestep(x,i,s)
 
+        #Note: EnKF returns only the physical state, in no case the extended state, it is appended in the timestep.
+
         if s['enable_twin'] == True:
-            x_twin = x[:,0]
+            x_twin = x[:2*s['n'],0]
             observed_data_current_time = x_twin[s['ilocs']].reshape(9,1)
             observed_data = np.hstack((observed_data,observed_data_current_time))
 
-            x[:,1:], en_mean,en_var = Ensemble_Kalman_Filter(x[:,1:],observed_data_current_time[:5,0].reshape(5,1),s)
+            x[:2*s['n'],1:], en_mean,en_var = Ensemble_Kalman_Filter(x[:,1:],observed_data_current_time[:5,0].reshape(5,1),s)
+            x = x[:2*s['n'],:]
 
             # Kalman bounds
-            x_upper_k  = en_mean  + np.sqrt(en_var)
-            x_lower_k = en_mean - np.sqrt(en_var)
+            x_upper_k  = en_mean  + np.sqrt(en_var) * 2
+            x_lower_k = en_mean - np.sqrt(en_var) * 2
 
             #Actual observed bounds
-            x_upper_m  = en_mean  + np.std(x[:,1:], axis=1,ddof=1).reshape(x[:,1:].shape[0],1)
-            x_lower_m = en_mean - np.std(x[:,1:], axis=1,ddof=1).reshape(x[:,1:].shape[0],1)
+            x_upper_m  = en_mean  + np.std(x[:,1:], axis=1,ddof=1).reshape(x_twin.size,1) * 2
+            x_lower_m = en_mean - np.std(x[:,1:], axis=1,ddof=1).reshape(x_twin.size,1) * 2
             twin_rmse = np.linalg.norm(x_twin - en_mean.flatten())/np.sqrt(x_twin.size)
             twin_rmse_list.append(twin_rmse)
 
 
             if s['enable_state_plot']:
                 plot_state(fig1, x[:,1:], None, s, stat_curves=(x_lower_k,x_lower_m, en_mean, x_upper_k,x_upper_m,x_twin))  # show spatial plot; nice but slow
-        else:
+        if s['enable_twin'] == False:
 
             x, en_mean, en_var = Ensemble_Kalman_Filter(x, observed_data[:5, i].reshape(5, 1), s)
             # Kalman bounds
@@ -394,8 +414,8 @@ def simulate(identical_twin = False):
             x_lower_k = en_mean - np.sqrt(en_var) * 2
 
             #Actual observed bounds
-            x_upper_m  = en_mean  + np.std(x, axis=1,ddof=1) * 2
-            x_lower_m = en_mean - np.std(x, axis=1,ddof=1) * 2
+            x_upper_m  = en_mean  + np.std(x[:,1:], axis=1,ddof=1).reshape(x[:,1:].shape[0],1) * 2
+            x_lower_m = en_mean - np.std(x[:,1:], axis=1,ddof=1).reshape(x[:,1:].shape[0],1) * 2
 
 
             if s['enable_state_plot']:
@@ -443,8 +463,8 @@ def simulate(identical_twin = False):
     #print('Bias:',Bias[:5])
     if s['enable_kalman'] == True:
         s_avg = np.average(series_data,axis = 1)
-        s_upper = np.average(series_data,axis = 1) + np.std(series_data,axis=1,ddof=1) * 2
-        s_lower = np.average(series_data,axis = 1) - np.std(series_data,axis=1,ddof=1) * 2
+        s_upper = s_avg + np.std(series_data,axis=1,ddof=1) * 2
+        s_lower =  s_avg - np.std(series_data,axis=1,ddof=1) * 2
 
         plot_series(times,series_data,s,observed_data,stat_curves=(s_lower,s_avg,s_upper),plot_ensemble=False)
     else:
@@ -457,7 +477,14 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
 
     if settings['enable_kalman'] == False:
         print('Kalman deactivated')
-        return ensemble_predicted, np.average(ensemble_predicted,axis = 1).reshape(member_dim,1), np.zeros(( member_dim, member_dim))
+        if settings['extended_state'] == True:
+            ensemble_predicted = ensemble_predicted[:-1,:]
+            avg = np.average(ensemble_predicted,axis = 1).reshape(member_dim,1)
+            avg = avg[:-1,:]
+            C_return = np.zeros(( member_dim - 1, member_dim - 1))
+
+
+        return ensemble_predicted, avg, C_return
 
 
     #Note that ensemble is a (nx,N_esemble) array, thus each member is a col. vector.
@@ -477,8 +504,8 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
     K = C_pertubed @ settings['H'].transpose() @ np.linalg.inv(S)
 
     #Pertube observations
-    y_pertubed = observations + np.random.multivariate_normal\
-        (np.zeros(settings['ilocs_size']),observation_cov,size=(ensemble_size)).transpose()
+    y_pertubed = observations + np.random.normal(0,settings['observation_noise'],size = (settings['ilocs_size'],ensemble_size) )#np.random.multivariate_normal\
+        #(np.zeros(settings['ilocs_size']),observation_cov,size=(ensemble_size)).transpose()
 
     #Update current state estimate in ensemble form
     x_update = (np.eye(member_dim) - K @ settings['H']) @ x_pertubed + K @ y_pertubed
@@ -489,8 +516,12 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
     if  settings['plot_kalman_gain']:
         plt.plot(K)
         plt.show()
-
-    return x_update,m_update , np.diag(C_update).reshape(member_dim,1)
+    if settings['extended_state']:
+        #Returning only physical states
+        settings['N'][:,settings['enable_twin']:] = x_update[-1,:].reshape(1,ensemble_size)
+        return x_update[:-1,:], m_update[:-1,:], np.diag(C_update)[:-1].reshape(member_dim - 1, 1)
+    if settings['extended_state'] == False:
+        return x_update,m_update , np.diag(C_update).reshape(member_dim,1)
 
 def estimate_rmse(series_data, observed_data, t,settings):
     #load observations
@@ -506,7 +537,7 @@ def estimate_rmse(series_data, observed_data, t,settings):
     ntimes = min(len(t), observed_data.shape[1])
     RMSE = np.linalg.norm(series_data.reshape(series_data.shape[0],series_data.shape[1]) - observed_data[:,:ntimes],axis = 1) / np.sqrt(ntimes)
     RMSE_Global = np.linalg.norm(series_data.reshape(series_data.shape[0],series_data.shape[1])[:5].flatten() - observed_data[:5,:ntimes].flatten()) / np.sqrt(observed_data.size)
-    Bias = np.average(series_data[:5],axis=1).flatten() - np.average(observed_data[:5,:ntimes],axis=1)
+    Bias = np.average(series_data[:5],axis=1).flatten() - np.average(observed_data[:5,:ntimes],axis=1).flatten()
 
 
 
