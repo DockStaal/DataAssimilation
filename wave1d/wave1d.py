@@ -88,16 +88,16 @@ def settings():
     s['ensemble_noise'] = s['sigma_w']
     s['ilocs_size'] = 5
     #[0.19947064 0.19788146 0.20207744 0.20950166 0.21756491] obtained with 5000 ensemble members, t_f = t_f * 20
-    s['observation_cov'] = np.diag(np.array([0.19947064, 0.19788146, 0.20207744, 0.20950166, 0.21756491])**2)
+    s['observation_cov'] = np.eye(s['ilocs_size'])*0.2**2#np.diag(np.array([0.19947064, 0.19788146, 0.20207744, 0.20950166, 0.21756491]))**2
     #s['observation_cov'] = np.eye(s['ilocs_size']) * 0.2**2
     s['N'] = 0
 
     #Enable Twin experiment
     #Adds an extra realization to the enseble, that will not be run through the kalman filter.
-    s['ensemble_size'] = 50
+    s['ensemble_size'] = 500
     s['enable_state_plot'] = False
     s['enable_kalman'] = True
-    s['enable_twin'] = True
+    s['enable_twin'] = False
     s['estimate_RMSE_bias']  = True
     s['ensemble_size'] = s['ensemble_size'] + s['enable_twin'] * 1
     s['h_left_zero'] = False
@@ -111,10 +111,12 @@ def settings():
     s['ensemble_spread_determination'] = True
     s['spread_vs_kalman_var'] = False
     s['plot_kalman_gain'] = False
+    s['adapted_ic'] = False
 
     #Cut off series from some index forward (including this index)
     s['cut_series'] = True
     s['series_cut_off_index'] = 1
+
                                            #hence, need to to change it in exercise 9!! 
     return s
 
@@ -138,7 +140,12 @@ def initialize(settings): #return (h,u,t) at initial time
         x[1::2,i]=u_0[:]
 
     #Setting initial boundary conditions
-    #x[0,:] +=  np.random.normal(0,settings['ensemble_noise'],size=(ensemble_size))
+    if settings['enable_twin']==True and settings['adapted_ic']==True :
+        x[1:,1:] +=  np.random.normal(0,0.2,size=(x[1:,1:].shape))
+
+    if settings['enable_twin']==False and settings['adapted_ic']==True :
+        x[1:,:] +=  np.random.normal(0,0.2,size=(x[1:,:].shape))
+
 
     #time
     t=settings['t']
@@ -270,14 +277,15 @@ def plot_K_gain(fig,K):
     plt.draw()
     plt.pause(0.5)
 
-def plot_series(t,series_data,s,obs_data,stat_curves = None):
+def plot_series(t,series_data,s,obs_data,stat_curves = None,plot_ensemble=False):
     # plot timeseries from model and observations
     loc_names=s['loc_names']
     nseries=len(loc_names)
     for i in range(nseries):
         fig,ax=plt.subplots()
-        for j in range(series_data.shape[1]):#(s['ensemble_size']):
-            ax.plot(t,series_data[i,j,:],linewidth=0.5,alpha=0.8) #blue is calculated
+        if plot_ensemble == True:
+            for j in range(series_data.shape[1]):#(s['ensemble_size']):
+                ax.plot(t,series_data[i,j,:],linewidth=0.5,alpha=0.8) #blue is calculated
         if stat_curves is not None:
             ax.plot(t, stat_curves[0][i], 'r--')
             ax.plot(t, stat_curves[1][i], 'sr--')
@@ -382,12 +390,12 @@ def simulate(identical_twin = False):
 
             x, en_mean, en_var = Ensemble_Kalman_Filter(x, observed_data[:5, i].reshape(5, 1), s)
             # Kalman bounds
-            x_upper_k  = en_mean  + np.sqrt(en_var)
-            x_lower_k = en_mean - np.sqrt(en_var)
+            x_upper_k  = en_mean  + np.sqrt(en_var) * 2
+            x_lower_k = en_mean - np.sqrt(en_var) * 2
 
             #Actual observed bounds
-            x_upper_m  = en_mean  + np.std(x, axis=1,ddof=1)
-            x_lower_m = en_mean - np.std(x, axis=1,ddof=1)
+            x_upper_m  = en_mean  + np.std(x, axis=1,ddof=1) * 2
+            x_lower_m = en_mean - np.std(x, axis=1,ddof=1) * 2
 
 
             if s['enable_state_plot']:
@@ -435,10 +443,10 @@ def simulate(identical_twin = False):
     #print('Bias:',Bias[:5])
     if s['enable_kalman'] == True:
         s_avg = np.average(series_data,axis = 1)
-        s_upper = np.average(series_data,axis = 1) + np.sqrt(en_var[s['ilocs']])
-        s_lower = np.average(series_data,axis = 1) - np.sqrt(en_var[s['ilocs']])
+        s_upper = np.average(series_data,axis = 1) + np.std(series_data,axis=1,ddof=1) * 2
+        s_lower = np.average(series_data,axis = 1) - np.std(series_data,axis=1,ddof=1) * 2
 
-        plot_series(times,series_data,s,observed_data,stat_curves=(s_lower,s_avg,s_upper))
+        plot_series(times,series_data,s,observed_data,stat_curves=(s_lower,s_avg,s_upper),plot_ensemble=False)
     else:
         plot_series(times, series_data, s, observed_data)
 
