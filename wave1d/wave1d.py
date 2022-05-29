@@ -87,12 +87,11 @@ def settings():
     s['sigma_w'] = 0.2 * np.sqrt((1 - s['alpha']**2))
     s['ensemble_noise'] = s['sigma_w']
     s['ilocs_size'] = 5
-    #[0.19947064 0.19788146 0.20207744 0.20950166 0.21756491] obtained with 5000 ensemble members, t_f = t_f * 20
-    s['observation_noise'] = 0.25
+
+    s['observation_noise'] = 0.2#0.29
     s['observation_cov'] = np.eye(s['ilocs_size']) * s['observation_noise']**2
 
-    #s['observation_cov'] = np.eye(s['ilocs_size']) * 0.2**2
-    s['N'] = 0
+
     s['innovation_sequence'] = []
     s['trace_comparison'] = []
     s['true_data'] = None
@@ -100,14 +99,20 @@ def settings():
 
     #Enable Twin experiment
     #Adds an extra realization to the enseble, that will not be run through the kalman filter.
-    s['ensemble_size'] = 1000
+    s['ensemble_size'] = 100
     s['enable_state_plot'] = False
-    s['enable_innovation_plot'] = True
+    s['enable_innovation_plot'] = False
+    s['innovation_sequence_analysis'] = True
+
+
     s['enable_kalman'] = True
     s['enable_twin'] = True
+    s['consistent_synthetic_data'] =  s['enable_twin'] * False
     s['estimate_RMSE_bias']  = True
     s['ensemble_size'] = s['ensemble_size'] + s['enable_twin'] * 1
+    s['N'] = np.zeros(s['ensemble_size'])
     s['h_left_zero'] = False
+
 
     #deactivate boundary noise
     s['zero_boundary_noise'] = False
@@ -116,7 +121,7 @@ def settings():
     s['h_left'] = s['h_left'] * (1 - s['h_left_zero'])
     if s['h_left_zero']:
         print('Bondary forcing around zero')
-    s['ensemble_spread_determination'] = True
+    s['ensemble_spread_determination'] = False
     s['spread_vs_kalman_var'] = False
     s['plot_kalman_gain'] = False
     s['adapted_ic'] = False
@@ -126,7 +131,6 @@ def settings():
     s['cut_series'] = True
     s['series_cut_off_index'] = 1
 
-                                           #hence, need to to change it in exercise 9!! 
     return s
 
 def initialize(settings): #return (h,u,t) at initial time
@@ -147,14 +151,12 @@ def initialize(settings): #return (h,u,t) at initial time
     for i in range(ensemble_size):
         x[0::2,i]=h_0[:]
         x[1::2,i]=u_0[:]
-    #Having initial pertubation
-    #N_old = settings['N']
-    #N_new = N_old * settings['alpha'] + np.random.randn(1, np.shape(x[0,:])[0]) * settings['sigma_w']
-    #x[0,:] += N_new.tr
+
 
     #Setting initial boundary conditions
     if settings['enable_twin']==True and settings['adapted_ic']==True :
-        x[1:,1:] +=  np.random.normal(0,0.2,size=(x[1:2*settings['n'],1:].shape))
+        #x[1:,1:] +=  np.random.normal(0,0.2,size=(x[1:2*settings['n'],1:].shape))
+        x[0, 1:] += np.random.normal(0, 0.2, size=(x[0, 1:].shape))
 
     if settings['enable_twin']==False and settings['adapted_ic']==True :
         x[1:,:] +=  np.random.normal(0,0.2,size=(x[1:2*settings['n'],:].shape))
@@ -225,9 +227,9 @@ def timestep(x,i,settings): #return (h,u) one timestep later
     #apply forcing
     if sigma_w > 0:
         N_old = settings['N']
-        N_new = N_old * settings['alpha']  + np.random.randn(1,np.shape(temp)[1]) * sigma_w
+        N_new = N_old * settings['alpha']  + np.random.normal(0,scale = sigma_w,size= (1,temp.shape[1]))#np.random.randn(1,np.shape(temp)[1]) * sigma_w
         if settings['enable_twin'] == True:
-            rhs[0, :] = rhs[0, :] + N_new[:,:]
+            rhs[0, :] = rhs[0, :] + N_new
         else:
             rhs[0,:]= rhs[0,:]  + N_new
         settings['N'] = N_new
@@ -243,7 +245,7 @@ def timestep(x,i,settings): #return (h,u) one timestep later
 
 
 
-    return newx.reshape((x.shape))
+        return newx.reshape((x.shape))
 
 def plot_state(fig,x,i,s,stat_curves = None):
     #plot all waterlevels and velocities at one time
@@ -332,14 +334,11 @@ def plot_series(t,series_data,s,obs_data,stat_curves = None,true_data = None, pl
         plt.savefig(path_to_figs / figname)
 
     
-def simulate(identical_twin = False):
+def simulate(verbose = False):
     # for plots
     plt.close('all')
-
-    #fig2,ax2 = plt.subplots() #maps: all state vars at one time
-    # locations of observations
-    s=settings()
-
+    #s=dict(settings())
+    s = settings()
     if s['enable_state_plot']:
         fig1,ax1 = plt.subplots()
 
@@ -372,16 +371,20 @@ def simulate(identical_twin = False):
     if s['enable_twin'] == True:
         #0 index is Twin
         #-1 index of second dimesnion is added state
+        if s['consistent_synthetic_data'] == True:
+            true_data = np.genfromtxt('true_synthetic_0.2.txt')
+            observed_data = np.genfromtxt('observed_synthetic_0.2.txt')
 
-        x_twin = x[:2*s['n'],:1]
-        twin_rmse_list = []
-        observed_data_current_time = x_twin[s['ilocs']]
-        true_data = np.copy(observed_data_current_time)
+        if s['consistent_synthetic_data'] == False:
+            x_twin = x[:2*s['n'],:1]
+            twin_rmse_list = []
+            observed_data_current_time = x_twin[s['ilocs']]
+            true_data = np.copy(observed_data_current_time)
 
-        #Pertube data synthetically, according to observation noise
-        observed_data_current_time[:s['ilocs_size']] +=  np.random.multivariate_normal(np.zeros(s['ilocs_size']),s['observation_cov']).reshape(s['ilocs_size'],1)
-        observed_data = observed_data_current_time
-    else:
+            #Pertube data synthetically, according to observation noise
+            observed_data_current_time[:s['ilocs_size']] +=  np.random.multivariate_normal(np.zeros(s['ilocs_size']),s['observation_cov'],1).transpose()
+            observed_data = observed_data_current_time
+    if s['enable_twin'] == False:
         (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_cadzand.txt')
         observed_data=np.zeros((len(ilocs),len(obs_times)))
         observed_data[0,:]=obs_values[:]
@@ -400,25 +403,28 @@ def simulate(identical_twin = False):
 
     #Note: This is how it is originally, this means the series data is not filled at timestep 0.
     for i in np.arange(1,len(t)):
-        print('timestep %d'%i)
+        if verbose:
+            print('timestep %d'%i)
+
         #Either extended state or not, depending on added noise and setting
         x=timestep(x,i,s)
 
         #Note: EnKF returns only the physical state, in no case the extended state, it is appended in the timestep.
 
         if s['enable_twin'] == True:
-            x_twin = x[:2*s['n'],0].reshape(2*s['n'],1)
-            #observed_data_current_time = x_twin[s['ilocs']].reshape(9,1)
+            if s['consistent_synthetic_data'] == True:
+                observed_data_current_time = observed_data[:,i ].reshape(9,1)
+            if s['consistent_synthetic_data'] == False:
+                x_twin = x[:2*s['n'],0].reshape(2*s['n'],1)
 
+                observed_data_current_time = x_twin[s['ilocs']]
+                true_data_current_time = np.copy(observed_data_current_time)
 
-            observed_data_current_time = x_twin[s['ilocs']]
-            true_data_current_time = np.copy(observed_data_current_time)
-
-            # Pertube data synthetically, according to observation noise
-            observed_data_current_time[:s['ilocs_size'],:] += np.random.multivariate_normal(np.zeros(s['ilocs_size']),
-                                                                        s['observation_cov']).reshape(s['ilocs_size'],1)
-            observed_data = np.hstack((observed_data,observed_data_current_time))
-            true_data = np.hstack((true_data,true_data_current_time))
+                # Pertube data synthetically, according to observation noise
+                observed_data_current_time[:s['ilocs_size'],:] += np.random.multivariate_normal(np.zeros(s['ilocs_size']),
+                                                                            s['observation_cov']).reshape(s['ilocs_size'],1)
+                observed_data = np.hstack((observed_data,observed_data_current_time))
+                true_data = np.hstack((true_data,true_data_current_time))
 
 
 
@@ -432,13 +438,14 @@ def simulate(identical_twin = False):
             x_lower_k = en_mean - np.sqrt(en_var) * 2
 
             #Actual observed bounds
-            x_upper_m  = en_mean  + np.std(x[:,1:], axis=1,ddof=1).reshape(x_twin.size,1) * 2
-            x_lower_m = en_mean - np.std(x[:,1:], axis=1,ddof=1).reshape(x_twin.size,1) * 2
-            twin_rmse = np.linalg.norm(x_twin - en_mean.flatten())/np.sqrt(x_twin.size)
-            twin_rmse_list.append(twin_rmse)
+            x_upper_m  = en_mean  + np.std(x[:,1:], axis=1,ddof=1).reshape(en_mean.size,1) * 2
+            x_lower_m = en_mean - np.std(x[:,1:], axis=1,ddof=1).reshape(en_mean.size,1) * 2
+            if s['consistent_synthetic_data'] == False:
+                twin_rmse = np.linalg.norm(x_twin - en_mean.flatten())/np.sqrt(x_twin.size)
+                twin_rmse_list.append(twin_rmse)
 
 
-            if s['enable_state_plot']:
+            if s['enable_state_plot'] * (1 - s['consistent_synthetic_data']):
                 plot_state(fig1, x[:,1:], None, s, stat_curves=(x_lower_k,x_lower_m, en_mean, x_upper_k,x_upper_m,x_twin))  # show spatial plot; nice but slow
         if s['enable_twin'] == False:
 
@@ -454,6 +461,7 @@ def simulate(identical_twin = False):
 
             if s['enable_state_plot']:
                 plot_state(fig1,x,None,s,stat_curves=(x_lower_k, x_lower_m,en_mean,x_upper_k,x_lower_m)) #show spatial plot; nice but slow
+
         if s['spread_vs_kalman_var'] and s['enable_kalman']:
             print('Discrepancy spread vs kalman uncertainty:', np.average((np.std(x[:-1,1:], axis=1,ddof=1)**2)[:]/en_var[:-1].flatten()))
 
@@ -463,9 +471,10 @@ def simulate(identical_twin = False):
         series_data[:,:,i]=x[ilocs,:]
     if s['enable_twin'] == True:
         series_data = series_data[:,1:,:]
-        twin_rmse_list = np.asarray(twin_rmse)
-        twin_rmse_avg = np.average(twin_rmse_list)
-        print('State RMSE against twin:',twin_rmse_avg)
+        if s['consistent_synthetic_data'] == False:
+            twin_rmse_list = np.asarray(twin_rmse)
+            twin_rmse_avg = np.average(twin_rmse_list)
+            print('State RMSE against twin:',twin_rmse_avg)
 
     if s['cut_series']:
         series_data = series_data[0:,0:,s['series_cut_off_index']:]
@@ -480,7 +489,8 @@ def simulate(identical_twin = False):
 
     #Estimate the RMSE and Bias
     if s['estimate_RMSE_bias']  == True:
-        estimate_rmse(series_data,observed_data,t,s)
+        RMSE_loc = estimate_rmse(series_data,observed_data,t,s)
+
 
     if s['ensemble_spread_determination']:
         if s['enable_twin']:
@@ -488,8 +498,12 @@ def simulate(identical_twin = False):
         else:
             ensemble_series = series_data[:5,:,s['series_cut_off_index'] * s['cut_series']:]
         obs_mean = np.average(ensemble_series,axis=1)
-        obs_std = np.std(ensemble_series,axis=1)
+        obs_std = np.std(ensemble_series,axis=1,ddof=1)
         average_std = np.average(obs_std,axis=1)
+        if s['estimate_RMSE_bias'] == True:
+           print("RMSE_sum, spread: %lf %lf"%(np.sum(RMSE_loc[:5]),np.sum(average_std)))
+
+
         print('Ensemble standard deviation around observation locations averaged in time:', average_std)
         plt.figure('Ensemble_spread')
         plt.plot(obs_std.transpose())
@@ -498,14 +512,30 @@ def simulate(identical_twin = False):
 
     if s['enable_innovation_plot']:
         s['innovation_sequence'] = np.asarray(s['innovation_sequence'])
-        q = s['innovation_sequence']
-        q_a = np.average(q, axis=2)
-        sequence = q_a.transpose() @ q_a * 1 / (q.shape[0])
-        t_1 = s['H'] @ s['P_f'] @ s['H'].transpose()
-        t_2 = s['observation_cov']
-        print('Trace comparison', np.trace(sequence) - np.trace(t_1) - np.trace(t_2))
-        plt.plot(s['trace_comparison'])
-        plt.show()
+        s['trace_comparison'] = np.asarray(s['trace_comparison'])
+        for k  in range(s['trace_comparison'].size):
+            trace_estimated = np.trace(s['innovation_sequence'][k])
+            diff = trace_estimated - s['trace_comparison'][k]
+            print('trace difference',diff)
+
+        print('success')
+
+        #q = s['innovation_sequence']
+        #q_a = np.average(q, axis=2)
+        #print('average',np.average(q_a,axis=0))
+        #plt.figure('Innovation sequence')
+        #plt.plot(q_a,alpha=0.4)
+        #plt.plot(np.average(q_a, axis=0).reshape(1, 5) * np.ones_like(q_a),'k--')
+
+
+        #plt.plot(np.average(q_a,axis=0))
+        #sequence = q_a.transpose() @ q_a * 1 / (q.shape[0] - 1)
+        #t_1 = s['H'] @ s['P_f'] @ s['H'].transpose()
+        #t_2 = s['observation_cov']
+        #print('Trace comparison', np.trace(sequence) - np.trace(t_1) - np.trace(t_2))
+        #plt.figure('Trace')
+        #plt.plot(s['trace_comparison'])
+        #plt.show()
         #print(np.average(np.average(s['innovation_sequence'], axis=0), axis=1))
         #plt.show()
 
@@ -521,7 +551,9 @@ def simulate(identical_twin = False):
         else:
             plot_series(times,series_data,s,observed_data,stat_curves=(s_lower,s_avg,s_upper),plot_ensemble=False)
     if s['enable_kalman'] == False:
-        plot_series(times, series_data, s, observed_data)
+        plot_series(times, series_data, s, observed_data,plot_ensemble=True)
+    if s['innovation_sequence_analysis'] == True:
+        return np.asarray(s['innovation_sequence']), np.asarray(s['trace_comparison'])
 
 def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
 
@@ -531,10 +563,11 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
     if settings['enable_kalman'] == False:
         print('Kalman deactivated')
         if settings['extended_state'] == True:
-            ensemble_predicted = ensemble_predicted[:-1,:]
-            avg = np.average(ensemble_predicted,axis = 1).reshape(member_dim,1)
+
+            avg = np.average(ensemble_predicted,axis = 1).reshape(member_dim ,1)
             avg = avg[:-1,:]
-            C_return = np.zeros(( member_dim - 1, member_dim - 1))
+            ensemble_predicted = ensemble_predicted[:-1,:]
+            C_return = np.zeros(( member_dim - 1,1))
 
 
         return ensemble_predicted, avg, C_return
@@ -554,33 +587,19 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
     #Analysis step
     S = settings['H'] @ C_pertubed @ settings['H'].transpose() \
         + observation_cov
+
     #Compute Gain
     K = C_pertubed @ settings['H'].transpose() @ np.linalg.inv(S)
 
-    #Pertube observations
-    #y_pertubed = observations + np.random.normal(0,settings['observation_noise'],size = (settings['ilocs_size'],ensemble_size) )#np.random.multivariate_normal\
-        #(np.zeros(settings['ilocs_size']),observation_cov,size=(ensemble_size)).transpose()
-
-    #Update current state estimate in ensemble form
-    #x_update = (np.eye(member_dim) - K @ settings['H']) @ x_pertubed + K @ y_pertubed
     #Lecture formulation
-    d = (observations - settings['H'] @ x_pertubed)
-    settings['innovation_sequence'].append(d)
+    d = observations - settings['H'] @ x_pertubed
+
+    #Adding Innovation
+    settings['innovation_sequence'].append(observations - settings['H'] @ m_pertubed)
     settings['P_f'] = C_pertubed
 
-    if settings['enable_innovation_plot']:
-        q = np.asarray(settings['innovation_sequence'])
-        q_a = np.average(q, axis=2)
-        sequence = q_a.transpose() @ q_a * 1 / (q.shape[0]-1)
-        t_1 = settings['H'] @ settings['P_f'] @ settings['H'].transpose()
-        t_2 = settings['observation_cov']
-        comp = np.trace(sequence) - np.trace(t_1) - np.trace(t_2)
-        settings['trace_comparison'].append(comp)
-        print('Trace comparison', np.trace(sequence) - np.trace(t_1) - np.trace(t_2))
-
-
-
-    x_update = x_pertubed + K @ (d - np.random.normal(0,scale=settings['observation_noise'],size = (settings['ilocs_size'],ensemble_size) ))
+    x_update = x_pertubed + K @ (d - np.random.multivariate_normal(np.zeros(settings['ilocs_size']),
+                                                                   settings['observation_cov'],ensemble_size).transpose())
 
     m_update =  np.average(x_update,axis = 1).reshape(member_dim,1)
 
@@ -588,7 +607,8 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
                  / (ensemble_predicted.shape[1] - 1)
 
 
-
+    if settings['innovation_sequence_analysis'] == True:
+        settings['trace_comparison'].append(np.trace(S))
 
     if  settings['plot_kalman_gain']:
         plt.plot(K)
@@ -629,6 +649,10 @@ def estimate_rmse(series_data, observed_data, t,settings):
     print('Relevant RMSE:',RMSE[:5])
     print('Relevant Global RMSE:',RMSE_Global)
     print(Bias)
+
+    if settings['enable_twin'] == True:
+        RMSE = RMSE_true
+    return RMSE
 
 
 
