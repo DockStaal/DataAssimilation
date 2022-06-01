@@ -40,16 +40,16 @@ days_to_seconds=24.*60.*60.
 path_to_figs = Path("../figures")
 path_to_data = Path("../data")
 
-def settings():
+def settings(ensemble_size = None):
     s=dict() #hashmap to  use s['g'] as s.g in matlab
-    # Constants
+    # Consants
     s['g']=9.81 # acceleration of gravity
     s['D']=20.0 # Depth
     s['f']=1/(0.06*days_to_seconds) # damping time scale
     L=100.e3 # length of the estuary
     s['L']=L
     n=100 #number of cells
-    s['n']=n    
+    s['n']=n
 
     # Grid(staggered water levels at 0 (boundary) dx 2dx ... (n-1)dx
     #      velocities at dx/2, 3dx/2, (n-1/2)dx
@@ -57,11 +57,11 @@ def settings():
     s['dx']=dx
     x_h = np.linspace(0,L-dx,n)
     s['x_h'] = x_h
-    s['x_u'] = x_h+0.5    
+    s['x_u'] = x_h+0.5
     # initial condition
     #TODO: Adjust intitial condition for ensemble, needs to be random I think.
     s['h_0'] = np.zeros(n)
-    s['u_0'] = np.zeros(n)    
+    s['u_0'] = np.zeros(n)
     # time
     t_f=2.*days_to_seconds #end of simulation
     t_f =   t_f
@@ -73,14 +73,15 @@ def settings():
     s['t']=t
     #boundary (western water level)
     #1) simple function
-    s['h_left'] = 2.5 * np.sin(2.0*np.pi/(12.*hours_to_seconds)*t)
+    #s['h_left'] = 2.5 * np.sin(2.0*np.pi/(12.*hours_to_seconds)*t)
+    #print('NOTE: ALTERNATIVE BOUNDARY SELECTED')
     #2) read from file
     (bound_times,bound_values)=timeseries.read_series(path_to_data / 'tide_cadzand.txt')
     bound_t=np.zeros(len(bound_times))
     for i in np.arange(len(bound_times)):
         bound_t[i]=(bound_times[i]-reftime).total_seconds()
 
-   # s['h_left'] = np.interp(t,bound_t,bound_values)
+    s['h_left'] = np.interp(t,bound_t,bound_values)
     T = 6 * 60 * 60
     s['alpha'] = np.exp(-dt/T)
 
@@ -88,53 +89,85 @@ def settings():
     s['ensemble_noise'] = s['sigma_w']
     s['ilocs_size'] = 5
 
-    s['observation_noise'] = 0.2#0.29
+    #Observation noise, subject to tuning.
+    s['observation_noise'] = 0.3
+
+    #Spread for ensemble initial condition
+    s['initial_ensemble_spread'] = 0.2
+    s['NP'] = s['sigma_w']**2
+
     s['observation_cov'] = np.eye(s['ilocs_size']) * s['observation_noise']**2
+    s['P_0'] = np.eye(s['ilocs_size']) * s['initial_ensemble_spread']**2
 
-
+    #Analysis lists
     s['innovation_sequence'] = []
     s['trace_comparison'] = []
     s['spread_list'] = []
     s['mean_rms'] = []
     s['mean_rms_spread_list'] = []
     s['mean_spread'] = []
+    s['predicted_variance'] = []
+    s['N_series'] = []
+    s['N_original_series'] = []
 
-
+    #True data for twin experiment if required
     s['true_data'] = None
 
 
     #Enable Twin experiment
     #Adds an extra realization to the enseble, that will not be run through the kalman filter.
-    s['ensemble_size'] = 1000
+    #Standard ensemble size
+    if ensemble_size is None:
+        s['ensemble_size'] = 500
+    else:
+        s['ensemble_size'] = ensemble_size
     s['enable_state_plot'] = False
     s['enable_innovation_plot'] = False
-    s['innovation_sequence_analysis'] = True
+    s['innovation_sequence_analysis'] = False
+
+    #Return values and plotting
+    s['spread_rms_analysis'] = False
+    s['spread_rmse_plot'] = False
+    s['convergence_analysis'] = True
+    s['collect_full_true_state'] = False
+    if s['collect_full_true_state']:
+        s['full_true_state'] = []
 
 
+    #Run settings
     s['enable_kalman'] = True
-    s['enable_twin'] = True
+    s['enable_twin'] = False
+    #Consistent twin data, obs. noise: 0.2, t_f = t_f
     s['consistent_synthetic_data'] =  s['enable_twin'] * False
-    s['estimate_RMSE_bias']  = True
-    s['ensemble_size'] = s['ensemble_size'] + s['enable_twin'] * 1
-
+    #Estimate RMSE and bias
+    s['estimate_RMSE_bias']  = False
+    #Ensemble size in case of twin experiment
+    s['ensemble_size'] = s['ensemble_size'] + s['enable_twin'] * 1 * (1 - s['consistent_synthetic_data'])
+    #Setting left boundary value to constant zero
     s['h_left_zero'] = False
+    s['h_left'] = s['h_left'] * (1 - s['h_left_zero'])
+    if s['h_left_zero']:
+        print('Bondary forcing around zero')
 
 
     #deactivate boundary noise
     s['zero_boundary_noise'] = False
-    s['sigma_w'] = s['sigma_w'] * (1 - s['zero_boundary_noise'])
-    s['N'] = np.zeros(s['ensemble_size'])
-    #for k in range(1000):
-     #   s['N'] = s['N']* s['alpha'] + np.random.normal(0,s['sigma_w'],size=(1,s['ensemble_size']))#np.zeros(s['ensemble_size'])
 
-    s['h_left'] = s['h_left'] * (1 - s['h_left_zero'])
-    if s['h_left_zero']:
-        print('Bondary forcing around zero')
+    s['sigma_w'] = s['sigma_w'] * (1 - s['zero_boundary_noise'])
+
+    #Initial N state
+    s['N'] = np.random.normal(0,s['sigma_w'],size =(1,s['ensemble_size']) )
+
+
+    #Analysis stuff
     s['ensemble_spread_determination'] = False
     s['spread_vs_kalman_var'] = False
     s['plot_kalman_gain'] = False
-    s['adapted_ic'] = False
+
+
+    s['adapted_ic'] = True
     s['extended_state'] = True
+
 
     #Cut off series from some index forward (including this index)
     s['cut_series'] = True
@@ -151,6 +184,7 @@ def initialize(settings): #return (h,u,t) at initial time
 
     x=np.zeros((2*n,ensemble_size)) #order h[0],u[0],...h[n],u[n]
 
+
     if settings['enable_twin'] == True:
         print('Twin experiment enabled.')
         print('Twin index is 0, not taken into account for Kalman filter')
@@ -164,8 +198,7 @@ def initialize(settings): #return (h,u,t) at initial time
 
     #Setting initial boundary conditions
     if settings['enable_twin']==True and settings['adapted_ic']==True :
-        #x[1:,1:] +=  np.random.normal(0,0.2,size=(x[1:2*settings['n'],1:].shape))
-        x[0, 1:] += np.random.normal(0,0.2, size=(x[0, 1:].shape))
+        x[:,1:] +=  np.random.normal(0,0.2,size=(x[:,1:].shape))
 
     if settings['enable_twin']==False and settings['adapted_ic']==True :
         x[1:,:] +=  np.random.normal(0,0.2,size=(x[1:2*settings['n'],:].shape))
@@ -236,20 +269,23 @@ def timestep(x,i,settings): #return (h,u) one timestep later
     #apply forcing
     if sigma_w > 0:
         N_old = settings['N'].copy()
-        N_new = N_old * settings['alpha']  + np.random.normal(0,scale = sigma_w,size= (1,temp.shape[1]))#np.random.randn(1,np.shape(temp)[1]) * sigma_w
+        N_new = N_old * settings['alpha'] #np.random.randn(1,np.shape(temp)[1]) * sigma_w
+        N_new[:, :] += np.random.normal(0, scale=sigma_w, size=(1, temp.shape[1]))
+
         if settings['enable_twin'] == True:
-            rhs[0, :] = rhs[0, :] + N_old.flatten()
+            rhs[0, :] = rhs[0, :] + N_old
         else:
             rhs[0,:]= rhs[0,:]  + N_old
-        settings['N'] = N_new
+        settings['N'] = N_new.copy()
+        settings['N_original_series'].append(N_new)
         #Avoiding changing linear system entirely
         newx = spsolve(A,rhs)
         if settings['extended_state'] == True:
             # Returning extended state for kalman filtering
-            newx = np.vstack((newx, settings['N']))
+            newx = np.vstack((newx, N_new.copy()))
 
         return  newx
-    else:
+    if sigma_w == 0 :
         newx = spsolve(A,rhs)
 
 
@@ -343,11 +379,12 @@ def plot_series(t,series_data,s,obs_data,stat_curves = None,true_data = None, pl
         plt.savefig(path_to_figs / figname)
 
     
-def simulate(verbose = False):
+def simulate(verbose = False,ensemble_size = None):
     # for plots
     plt.close('all')
     #s=dict(settings())
-    s = settings()
+
+    s = settings(ensemble_size = ensemble_size)
     if s['enable_state_plot']:
         fig1,ax1 = plt.subplots()
 
@@ -371,6 +408,11 @@ def simulate(verbose = False):
     #Initializing
     (x,t0)=initialize(s)
 
+    if s['collect_full_true_state'] and s['enable_twin']:
+        ts = x[:, 0]
+        ts = np.append(ts, s['N'][0,0])
+        s['full_true_state'].append(ts)
+
     # Generating H-matrix for observations
     H = np.zeros((s['ilocs_size'],s['n']*2 + s['extended_state']))
     H[(np.arange(5),ilocs[:5])] = 1
@@ -380,22 +422,33 @@ def simulate(verbose = False):
     if s['enable_twin'] == True:
         #0 index is Twin
         #-1 index of second dimesnion is added state
+        twin_rmse_list = []
+        true_error_list = []
+        spread_list = []
+        mean_rms_spread_list = []
         if s['consistent_synthetic_data'] == True:
+            full_true_data = np.genfromtxt('true_full_synthetic_0.2.txt')
             true_data = np.genfromtxt('true_synthetic_0.2.txt')
-            observed_data = np.genfromtxt('observed_synthetic_0.2.txt')
+
+            #pertubed true data synthetically
+            observed_data_current_time = true_data[:, i].reshape(9, 1).copy()
+            observed_data_current_time[:s['ilocs_size']] += np.random.multivariate_normal(
+                np.zeros(s['ilocs_size']),
+                s['observation_cov']).reshape(s['ilocs_size'], 1)
+
+            observed_data = np.copy(observed_data_current_time)
+
 
         if s['consistent_synthetic_data'] == False:
             x_twin = x[:2*s['n'],:1]
-            twin_rmse_list = []
-            true_error_list = []
-            spread_list = []
-            mean_rms_spread_list = []
-            observed_data_current_time = x_twin[s['ilocs']]
-            true_data = np.copy(observed_data_current_time)
+
+            true_data = x_twin[s['ilocs']]
+            observed_data_current_time = np.copy(true_data)
 
             #Pertube data synthetically, according to observation noise
             observed_data_current_time[:s['ilocs_size']] +=  np.random.multivariate_normal(np.zeros(s['ilocs_size']),s['observation_cov'],1).transpose()
             observed_data = observed_data_current_time
+
     if s['enable_twin'] == False:
         (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_cadzand.txt')
         observed_data=np.zeros((len(ilocs),len(obs_times)))
@@ -421,28 +474,39 @@ def simulate(verbose = False):
         #Either extended state or not, depending on added noise and setting
         x=timestep(x,i,s)
 
+        if s['collect_full_true_state'] and s['enable_twin']:
+            s['full_true_state'].append(x[:, 0])
+
         #Note: EnKF returns only the physical state, in no case the extended state, it is appended in the timestep.
 
         if s['enable_twin'] == True:
             if s['consistent_synthetic_data'] == True:
-                observed_data_current_time = observed_data[:,i ].reshape(9,1)
+                observed_data_current_time = true_data[:,i ].reshape(9,1).copy()
+                observed_data_current_time[:s['ilocs_size'],:] += np.random.multivariate_normal(np.zeros(s['ilocs_size']),
+                                                                            s['observation_cov']).reshape(s['ilocs_size'],1)
+                observed_data = np.hstack((observed_data, observed_data_current_time))
+
+
+
+
             if s['consistent_synthetic_data'] == False:
                 x_twin = x[:2*s['n'],0].reshape(2*s['n'],1)
 
-                observed_data_current_time = x_twin[s['ilocs']]
-                true_data_current_time = np.copy(observed_data_current_time)
+                true_data_current_time = x_twin[s['ilocs']]
+                true_data = np.hstack((true_data, true_data_current_time))
 
                 # Pertube data synthetically, according to observation noise
+                observed_data_current_time = np.copy(true_data_current_time)
                 observed_data_current_time[:s['ilocs_size'],:] += np.random.multivariate_normal(np.zeros(s['ilocs_size']),
                                                                             s['observation_cov']).reshape(s['ilocs_size'],1)
                 observed_data = np.hstack((observed_data,observed_data_current_time))
-                true_data = np.hstack((true_data,true_data_current_time))
+
 
 
 
 
             #Note, only actual observations are passed
-            x[:2*s['n'],1:], en_mean,en_var = Ensemble_Kalman_Filter(x[:,1:],observed_data_current_time[:5,0].reshape(5,1),s)
+            x[:2*s['n'],1:], en_mean,en_var = Ensemble_Kalman_Filter(x[:,1:].copy(),observed_data_current_time[:5,0].reshape(5,1),s)
             x = x[:2*s['n'],:]
 
             # Kalman bounds
@@ -452,21 +516,31 @@ def simulate(verbose = False):
             #Actual observed bounds
             x_upper_m  = en_mean  + np.std(x[:,1:], axis=1,ddof=1).reshape(en_mean.size,1) * 2
             x_lower_m = en_mean - np.std(x[:,1:], axis=1,ddof=1).reshape(en_mean.size,1) * 2
-            if s['consistent_synthetic_data'] == False:
-                true_error = (x_twin - en_mean)
-                N = s['N'].transpose()
-                N_error = N[0,:] - np.average(N[1:])
-                #Accounting for full state statistics
-                true_error_list.append(np.vstack((true_error,N_error)))
-                spread_list.append(np.sqrt(en_var))
-                #mean_rms_spread = np.linalg.norm(np.linalg.norm(en_mean - x[:,1:],axis=0))*1/(np.sqrt((en_mean.size) * (s['ensemble_size']-1)))
-                #mean_rms_spread_list.append(mean_rms_spread)
-                #mean_rms_spread_list = n
 
+            if s['spread_rms_analysis']:
+                if s['consistent_synthetic_data'] == True:
+                    x_twin = full_true_data[:,i].reshape(en_mean.shape[0] + 1,1)
+                    true_error = (x_twin[:-1,:] - en_mean)
+                    N = s['N'].copy().transpose()
+                    N_error = x_twin[-1,:] - np.average(N[1:])
+                    #Accounting for full state statistics
+                    true_error_list.append(np.vstack((true_error,N_error)))
+
+
+                if s['consistent_synthetic_data'] == False:
+                    true_error = (x_twin - en_mean)
+                    N = s['N'].copy().transpose()
+                    N_error = N[0,:] - np.average(N[1:])
+                    #Accounting for full state statistics
+                    true_error_list.append(np.vstack((true_error,N_error)))
+                    s['N_series'].append(s['N'].copy())
+
+                spread_list.append(np.sqrt(en_var))
 
 
             if s['enable_state_plot'] * (1 - s['consistent_synthetic_data']):
                 plot_state(fig1, x[:,1:], None, s, stat_curves=(x_lower_k,x_lower_m, en_mean, x_upper_k,x_upper_m,x_twin))  # show spatial plot; nice but slow
+
         if s['enable_twin'] == False:
 
             x, en_mean, en_var = Ensemble_Kalman_Filter(x, observed_data[:5, i].reshape(5, 1), s)
@@ -489,26 +563,34 @@ def simulate(verbose = False):
 
 
         series_data[:,:,i]=x[ilocs,:]
+
+
+
     if s['enable_twin'] == True:
         series_data = series_data[:,1:,:]
-        if s['consistent_synthetic_data'] == False:
+        if s['collect_full_true_state'] == True:
+            s_true = np.asarray(s['full_true_state']).transpose()
+        if s['spread_rms_analysis'] == True:
             true_error_list = np.asarray(true_error_list)
             spread_list = np.asarray(spread_list)
             mean_rms_spread_list = np.asarray(s['mean_rms_spread_list']).reshape(len(s['mean_rms_spread_list']),1)
 
             mean_rms = np.linalg.norm(true_error_list,axis=1)/np.sqrt(true_error_list.shape[1])
-            rmse = np.linalg.norm(true_error_list, axis=0) / np.sqrt(true_error_list.shape[0])
-            avg_spread = np.average(spread_list,axis=0)
-            plt.figure('time_series')
-            plt.plot(mean_rms_spread_list[10:])
-            plt.plot(mean_rms[10:],alpha=0.1)
-            plt.plot((np.ones_like(mean_rms) * np.average(mean_rms[10:]))[10:],'k--')
 
+            if s['spread_rmse_plot']:
+                plt.figure('time_series')
+                plt.plot(mean_rms_spread_list[10:])
+                plt.plot(mean_rms[10:],alpha=0.1)
+                plt.plot((np.ones_like(mean_rms) * np.average(mean_rms[10:]))[10:],'k--')
 
-            plt.figure('RMSE time')
-            plt.plot(rmse[::2])
-            plt.plot(avg_spread[::2])
-            plt.show()
+                rmse = np.linalg.norm(true_error_list, axis=0) / np.sqrt(true_error_list.shape[0])
+                avg_spread = np.average(spread_list,axis=0)
+                # N_a = np.asarray(s['N_series'])
+                # N_o = np.asarray(s['N_original_series'])
+                plt.figure('RMSE time')
+                plt.plot(rmse[::2])
+                plt.plot(avg_spread[::2])
+                plt.show()
 
     if s['cut_series']:
         series_data = series_data[0:,0:,s['series_cut_off_index']:]
@@ -588,6 +670,12 @@ def simulate(verbose = False):
         plot_series(times, series_data, s, observed_data,plot_ensemble=True)
     if s['innovation_sequence_analysis'] == True:
         return np.asarray(s['innovation_sequence']), np.asarray(s['trace_comparison'])
+    if  s['spread_rms_analysis'] and not s['convergence_analysis'] :
+        return mean_rms_spread_list, mean_rms
+    if s['convergence_analysis']:
+        return estimate_rmse(series_data,observed_data,t,s)#np.average(np.average(np.asarray(s['predicted_variance']),axis=1))
+    #if s['convergenve_analysis']:
+
 
 def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
 
@@ -612,6 +700,8 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
 
     #Predcition step
     x_pertubed = np.copy(ensemble_predicted)
+    #x_pertubed[-1:] += np.random.normal(0,scale = settings['sigma_w'],size= (x_pertubed[-1:].shape)) * 10
+
     #x_pertubed[0:2*settings['n'],:] = x_pertubed[0:2*settings['n'],:] + np.random.normal(0,settings['sigma_w'],size = (ensemble_size,1))
     m_pertubed = np.average(x_pertubed,axis = 1).reshape(member_dim,1)
 
@@ -640,23 +730,25 @@ def Ensemble_Kalman_Filter(ensemble_predicted,observations,settings):
     C_update = (x_update - m_update) @ (x_update - m_update).transpose()\
                  / (ensemble_predicted.shape[1] - 1)
 
-    if settings['consistent_synthetic_data'] == False:
+    if settings['spread_rms_analysis'] == True:
         mean_rms_spread = np.linalg.norm(np.linalg.norm(m_update - x_update, axis=0)) / (
             np.sqrt((m_update.size) * (ensemble_size - 1)))
         #mean_rmse_spread = np.linalg.norm(np.std())
-        settings['mean_rms_spread_list'].append(mean_rms_spread)
+        settings['mean_rms_spread_list'].append(mean_rms_spread.copy())
         # mean_rms_spread_list = n
+    if settings['convergence_analysis']:
+        settings['predicted_variance'].append(np.diag(C_update))
 
     if settings['innovation_sequence_analysis'] == True:
         settings['trace_comparison'].append(np.trace(S))
 
+
     if  settings['plot_kalman_gain']:
-        plt.plot(K)
+        plt.plot(K[::2])
         plt.show()
     if settings['extended_state']:
         #Returning only physical states
-        #WTF IS THIS
-        settings['N'][:,settings['enable_twin']:] = x_update[-1,:].reshape(1,ensemble_size)
+        settings['N'][:,settings['enable_twin']:] = (x_update[-1,:].reshape(1,ensemble_size)).copy()
         return x_update[:-1,:], m_update[:-1,:], np.diag(C_update)[:-1].reshape(member_dim - 1, 1)
 
     if settings['extended_state'] == False:
@@ -694,11 +786,11 @@ def estimate_rmse(series_data, observed_data, t,settings):
 
     if settings['enable_twin'] == True:
         RMSE = RMSE_true
-    return RMSE
+    return RMSE_Global
 
 
 
 #main program
 if __name__ == "__main__":
-    simulate(verbose=True)
+    simulate(verbose=True,ensemble_size= None)
     plt.show()
