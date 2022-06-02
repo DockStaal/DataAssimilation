@@ -29,7 +29,6 @@ from scipy.sparse.linalg import spsolve
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from sklearn import ensemble
 import timeseries
 import dateutil.parser
 import datetime
@@ -313,8 +312,8 @@ def plot_state(fig,x,i,s,stat_curves = None):
 
     xu=s['x_u']
     ax2=fig.add_subplot(212)
-    for i in range(x.shape[1]):
-        ax2.plot(xu,x[1::2,i])
+    for j in range(x.shape[1]):
+        ax2.plot(xu,x[1::2,j])
     ax2.set_ylabel('u')
 
     if stat_curves is not None:
@@ -334,14 +333,11 @@ def plot_state(fig,x,i,s,stat_curves = None):
         if s['enable_twin'] == True:
             ax1.plot(xh, stat_curves[-1][0::2], 'r:')
 
-
     figname = "fig_map_%3.3d.png"%i
     plt.savefig(path_to_figs / figname)
 
-
-
     plt.draw()
-    plt.pause(0.5)
+    plt.pause(0.01)
 
 def plot_K_gain(fig,K):
     fig.clear()
@@ -351,7 +347,7 @@ def plot_K_gain(fig,K):
 
 def plot_series(t,series_data,s,obs_data,stat_curves = None,true_data = None, plot_ensemble=False):
     # plot timeseries from model and observations
-    loc_names=s['loc_names']
+    loc_names=s['loc_names'] # contains the names of the titels of the last nine plots
     nseries=len(loc_names)
     for i in range(nseries):
         fig,ax=plt.subplots()
@@ -375,9 +371,32 @@ def plot_series(t,series_data,s,obs_data,stat_curves = None,true_data = None, pl
         mean = np.average(series_data[i,:,:],axis = 0)
         #ax.plot(t, mean,'s:')
         ax.plot(t[0:ntimes],obs_data[i,0:ntimes],'k-') #black is observed
+        ax.plot(t[0:ntimes],mean,'b-')
+
+        #RMSE calc :)
+        RMSE = np.sum(np.linalg.norm(mean - obs_data[i,:ntimes]))/ np.sqrt(mean.size) 
+        print(RMSE)
         figname = ("%s.png"%loc_names[i]).replace(' ','_')
         plt.savefig(path_to_figs / figname)
 
+"""
+    if s['ensemble_spread_determination']:
+        if s['enable_twin']:
+            ensemble_series = series_data[:,1:,0:][:5,:,:]
+        else:
+            ensemble_series = series_data[:5,:,:]
+        obs_mean = np.average(ensemble_series,axis=1)
+        obs_std = np.std(ensemble_series,axis=1)
+        print(obs_std.shape)
+        average_std = np.average(obs_std[:,100:],axis=1)
+        print('Ensemble standard deviation around observation locations averaged in time:', average_std)
+        names=['Cadzand','Vlissingen','Terneuzen','Hansweert','Bath']
+        plt.figure('Ensemble_spread')
+        plt.plot(obs_std.transpose())
+        plt.legend(names)
+        plt.savefig(path_to_figs / 'ensemble_spread.png')
+        plt.show()
+"""
     
 def simulate(verbose = False,ensemble_size = None):
     # for plots
@@ -621,8 +640,11 @@ def simulate(verbose = False,ensemble_size = None):
 
 
         print('Ensemble standard deviation around observation locations averaged in time:', average_std)
+        names=['Cadzand','Vlissingen','Terneuzen','Hansweert','Bath']
         plt.figure('Ensemble_spread')
         plt.plot(obs_std.transpose())
+        plt.legend(names)
+        plt.savefig(path_to_figs / 'ensemble_spread.png')
         plt.show()
 
 
