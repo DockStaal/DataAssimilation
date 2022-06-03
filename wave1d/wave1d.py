@@ -7,7 +7,7 @@
 # 
 # staggered discretiztation in space and central in time
 #
-# o -> o -> o -> o ->   # staggering
+
 # L u  h u  h u  h  R   # element
 # 0 1  2 3  4 5  6  7   # index in state vector
 #
@@ -72,7 +72,7 @@ def settings(ensemble_size = None):
     s['t']=t
     #boundary (western water level)
     #1) simple function
-    #s['h_left'] = 2.5 * np.sin(2.0*np.pi/(12.*hours_to_seconds)*t)
+    s['h_left'] = 2.5 * np.sin(2.0*np.pi/(12.*hours_to_seconds)*t)
     #print('NOTE: ALTERNATIVE BOUNDARY SELECTED')
     #2) read from file
     (bound_times,bound_values)=timeseries.read_series(path_to_data / 'tide_cadzand.txt')
@@ -80,22 +80,24 @@ def settings(ensemble_size = None):
     for i in np.arange(len(bound_times)):
         bound_t[i]=(bound_times[i]-reftime).total_seconds()
 
-    s['h_left'] = np.interp(t,bound_t,bound_values)
+    #s['h_left'] = np.interp(t,bound_t,bound_values)
     T = 6 * 60 * 60
     s['alpha'] = np.exp(-dt/T)
 
-    s['sigma_w'] = 0.2 * np.sqrt((1 - s['alpha']**2))
+    s['sigma_w'] = 0.9 * np.sqrt((1 - s['alpha']**2))
     s['ensemble_noise'] = s['sigma_w']
     s['ilocs_size'] = 5
 
     #Observation noise, subject to tuning.
-    s['observation_noise'] = 0.3
+    s['observation_noise'] = 0.2
 
     #Spread for ensemble initial condition
     s['initial_ensemble_spread'] = 0.2
     s['NP'] = s['sigma_w']**2
 
+    s['boundary_noice'] = 0.63 + 0.29
     s['observation_cov'] = np.eye(s['ilocs_size']) * s['observation_noise']**2
+    s['observation_cov'][0, 0] = 0.63 + 0.29
     s['P_0'] = np.eye(s['ilocs_size']) * s['initial_ensemble_spread']**2
 
     #Analysis lists
@@ -135,6 +137,7 @@ def settings(ensemble_size = None):
 
     #Run settings
     s['enable_kalman'] = True
+    s['kalman_cutoff'] = 150 #If none no cutoff otherwise at given timestep
     s['enable_twin'] = False
     #Consistent twin data, obs. noise: 0.2, t_f = t_f
     s['consistent_synthetic_data'] =  s['enable_twin'] * False
@@ -349,6 +352,7 @@ def plot_series(t,series_data,s,obs_data,stat_curves = None,true_data = None, pl
     # plot timeseries from model and observations
     loc_names=s['loc_names'] # contains the names of the titels of the last nine plots
     nseries=len(loc_names)
+    print("kalman_cutoff is set to: ", s['kalman_cutoff'])
     for i in range(nseries):
         fig,ax=plt.subplots()
         if plot_ensemble == True:
@@ -370,12 +374,16 @@ def plot_series(t,series_data,s,obs_data,stat_curves = None,true_data = None, pl
 
         mean = np.average(series_data[i,:,:],axis = 0)
         #ax.plot(t, mean,'s:')
-        ax.plot(t[0:ntimes],obs_data[i,0:ntimes],'k-') #black is observed
+        if i is not 0:
+            ax.plot(t[0:ntimes],obs_data[i,0:ntimes],'k-') #black is observed
         ax.plot(t[0:ntimes],mean,'b-')
 
         #RMSE calc :)
-        RMSE = np.sum(np.linalg.norm(mean - obs_data[i,:ntimes]))/ np.sqrt(mean.size) 
-        print(RMSE)
+        if s['kalman_cutoff'] is None:
+            RMSE = np.sum(np.linalg.norm(mean - obs_data[i,:ntimes]))/ np.sqrt(mean.size) 
+        else:
+            RMSE = np.sum(np.linalg.norm(mean[s['kalman_cutoff']:ntimes] - obs_data[i,s['kalman_cutoff']:ntimes]))/ np.sqrt(mean.size) 
+        print("RMSE for %s is %f"%(loc_names[i],RMSE))
         figname = ("%s.png"%loc_names[i]).replace(' ','_')
         plt.savefig(path_to_figs / figname)
 
@@ -472,13 +480,13 @@ def simulate(verbose = False,ensemble_size = None):
         (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_cadzand.txt')
         observed_data=np.zeros((len(ilocs),len(obs_times)))
         observed_data[0,:]=obs_values[:]
-        (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_vlissingen.txt')
+        (obs_times,obs_values)=timeseries.read_series(path_to_data / 'waterlevel_vlissingen.txt')
         observed_data[1,:]=obs_values[:]
-        (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_terneuzen.txt')
+        (obs_times,obs_values)=timeseries.read_series(path_to_data / 'waterlevel_terneuzen.txt')
         observed_data[2,:]=obs_values[:]
-        (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_hansweert.txt')
+        (obs_times,obs_values)=timeseries.read_series(path_to_data / 'waterlevel_hansweert.txt')
         observed_data[3,:]=obs_values[:]
-        (obs_times,obs_values)=timeseries.read_series(path_to_data / 'tide_bath.txt')
+        (obs_times,obs_values)=timeseries.read_series(path_to_data / 'waterlevel_bath.txt')
         observed_data[4,:]=obs_values[:]
 
     t=s['t'][:] #[:40]
@@ -561,7 +569,12 @@ def simulate(verbose = False,ensemble_size = None):
                 plot_state(fig1, x[:,1:], None, s, stat_curves=(x_lower_k,x_lower_m, en_mean, x_upper_k,x_upper_m,x_twin))  # show spatial plot; nice but slow
 
         if s['enable_twin'] == False:
-
+            
+            if s['kalman_cutoff'] is not None:
+                if s['kalman_cutoff'] < i:
+                    s['enable_kalman'] = False
+                    s['alpha'] = 1
+                    s['sigma_w'] = 0.01
             x, en_mean, en_var = Ensemble_Kalman_Filter(x, observed_data[:5, i].reshape(5, 1), s)
             # Kalman bounds
             x_upper_k  = en_mean  + np.sqrt(en_var) * 2
@@ -814,5 +827,5 @@ def estimate_rmse(series_data, observed_data, t,settings):
 
 #main program
 if __name__ == "__main__":
-    simulate(verbose=True,ensemble_size= None)
+    simulate(verbose=True,ensemble_size= None) 
     plt.show()
